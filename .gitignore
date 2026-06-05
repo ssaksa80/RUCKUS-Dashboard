@@ -1,0 +1,33 @@
+# Runtime artifacts (cert keys, fernet secrets, profile blobs, logs)
+RUCKUS/instance/
+instance/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local dotenv overrides
+.env
+.env.local

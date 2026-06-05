@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% set active_slug = "overview" %}
+{% block title %}DSO Overview{% endblock %}
+{% block breadcrumb %}DSO Overview{% endblock %}
+{% block content %}
+<section class="overview">
+  <h1>DSO Overview</h1>
+  <p class="subtitle">Live service-health rollup. Click any tile to drill in.</p>
+  <div class="tile-grid">
+    {% for m in modules if m.slug != "overview" %}
+    <a href="/m/{{ m.slug }}" class="tile" data-slug="{{ m.slug }}">
+      <span class="tile-icon">{{ m.icon }}</span>
+      <span class="tile-title">{{ m.title }}</span>
+      <span class="tile-value" data-tile-value="{{ m.slug }}">—</span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

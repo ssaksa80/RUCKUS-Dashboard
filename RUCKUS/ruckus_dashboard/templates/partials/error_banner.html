@@ -1,0 +1,5 @@
+{% if errors %}
+<div class="error-banner">
+  {% for e in errors %}<div>{{ e.connection }}: {{ e.endpoint }} — {{ e.message }} ({{ e.status }})</div>{% endfor %}
+</div>
+{% endif %}

@@ -1,0 +1,5 @@
+<div class="kpi-card {{ kind|default('neutral') }}">
+  <span class="kpi-label">{{ label }}</span>
+  <span class="kpi-value" aria-live="polite">{{ value }}</span>
+  {% if meta %}<span class="kpi-meta">{{ meta }}</span>{% endif %}
+</div>

@@ -1,0 +1,5 @@
+<div class="freshness-strip">
+  <span>{{ ok_count }}/{{ total_count }} controllers</span>
+  <span>· last refresh {{ generated_at }}</span>
+  {% if stale_since %}<span class="stale">stale since {{ stale_since }}</span>{% endif %}
+</div>

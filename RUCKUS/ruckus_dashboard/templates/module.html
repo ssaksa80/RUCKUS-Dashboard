@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% set active_slug = module.slug %}
+{% block title %}{{ module.title }} · DSO{% endblock %}
+{% block breadcrumb %}{{ module.group }} › {{ module.title }}{% if entity_id %} › {{ entity_id }}{% endif %}{% endblock %}
+{% block content %}
+<section class="module" data-slug="{{ module.slug }}" data-poll="{{ module.poll_seconds }}"
+         {% if entity_id %}data-entity="{{ entity_id }}"{% endif %}>
+  <header class="module-head">
+    <h1>{{ module.icon }} {{ module.title }}</h1>
+    <div class="module-meta">
+      <span data-freshness>—</span>
+      <span data-status>idle</span>
+    </div>
+  </header>
+  <div class="kpi-strip" data-kpi-strip>
+    <!-- KPI cards rendered by JS from summary -->
+  </div>
+  <div class="filters" data-filters>
+    <!-- filter chips injected by per-module JS -->
+  </div>
+  <div class="view-toggle" data-views="{{ module.supports_views|join(',') }}">
+    {% for v in module.supports_views %}
+    <button data-view="{{ v }}" class="{% if loop.first %}active{% endif %}">{{ v }}</button>
+    {% endfor %}
+  </div>
+  <div class="data-area" data-data-area>
+    <p class="loading">Loading…</p>
+  </div>
+  <footer class="module-foot">
+    <span class="error-banner" data-error-banner hidden></span>
+    <span class="freshness">controller status will appear here</span>
+  </footer>
+</section>
+{% endblock %}

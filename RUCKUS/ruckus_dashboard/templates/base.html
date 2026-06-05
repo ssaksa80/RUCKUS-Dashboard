@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}RUCKUS DSO Dashboard{% endblock %}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+<div class="layout">
+  <aside class="sidebar" aria-label="modules">
+    <div class="brand">
+      <img class="brand-logo" src="{{ url_for('static', filename='assets/ruckus-logo.png') }}" alt="RUCKUS">
+      <span class="brand-title">DSO Dashboard</span>
+    </div>
+    <nav class="module-nav">
+      {% set groups = {} %}
+      {% for m in modules %}{% set _ = groups.setdefault(m.group, []).append(m) %}{% endfor %}
+      {% for group, items in groups.items() %}
+      <div class="nav-group">
+        <h3 class="nav-group-title">{{ group }}</h3>
+        <ul>
+          {% for m in items %}
+          <li>
+            <a href="/m/{{ m.slug }}" data-slug="{{ m.slug }}"
+               class="nav-item {% if active_slug == m.slug %}active{% endif %}">
+              <span class="nav-icon">{{ m.icon }}</span>
+              <span class="nav-label">{{ m.title }}</span>
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </nav>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="breadcrumb">{% block breadcrumb %}{% endblock %}</div>
+      <div class="topbar-actions">
+        <button class="dso-toggle" id="dso-toggle" title="Toggle DSO wall mode">⛶ DSO</button>
+      </div>
+    </header>
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<script>window.__CSRF_TOKEN = "{{ csrf_token }}";</script>
+<script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>
