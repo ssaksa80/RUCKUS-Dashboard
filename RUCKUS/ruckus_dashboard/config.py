@@ -50,6 +50,8 @@ def build_config(instance_path: str) -> dict:
         # ─── NEW UI shell ────────────────────────────────────────
         "RUCKUS_ENABLE_NEW_UI": _bool_env("RUCKUS_ENABLE_NEW_UI", False),
         "RUCKUS_MAX_INFLIGHT_PER_MODULE": _int_env("RUCKUS_MAX_INFLIGHT_PER_MODULE", 1),
+        "RUCKUS_WARMUP_WORKERS": _int_env("RUCKUS_WARMUP_WORKERS", 4),
+        "RUCKUS_WARMUP_TIMEOUT": _float_env("RUCKUS_WARMUP_TIMEOUT", 30.0),
     }
 
 

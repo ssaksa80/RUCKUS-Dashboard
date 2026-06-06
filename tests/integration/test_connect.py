@@ -208,3 +208,60 @@ def test_module_data_after_connect_returns_envelope_not_401(monkeypatch):
         body = r2.get_json()
         assert body["data"]["disabled"] is True
         assert "missing_capabilities" in body["data"]
+
+
+def test_connect_starts_warmup_scheduler():
+    from ruckus_dashboard.app import create_app
+    from ruckus_dashboard.infra.warmup import WarmupScheduler
+    import responses
+
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+
+    base = "https://sz.example:8443/wsg/api/public"
+    with responses.RequestsMock() as r:
+        r.add(responses.GET, f"{base}/apiInfo",
+              json={"apiSupportVersions": ["v11_0"]}, status=200)
+        r.add(responses.POST, f"{base}/v11_0/serviceTicket",
+              json={"serviceTicket": "tkt", "controllerVersion": "6"}, status=200)
+        r.add(responses.GET, "https://sz.example:8443/wsg/apiDoc/openapi",
+              status=404)
+        r.add(responses.GET, "https://sz.example:8443/switchm/api/openapi",
+              status=404)
+
+        with app.test_client() as c:
+            c.get("/")
+            with c.session_transaction() as s:
+                token = s["csrf_token"]
+            resp = c.post("/connect", data={
+                "csrf_token": token,
+                "platform": "smartzone",
+                "smartzone_host": "sz.example",
+                "smartzone_username": "u",
+                "smartzone_password": "p",
+                "smartzone_api_version": "auto",
+                "smartzone_skip_tls_verify": "1",
+            }, follow_redirects=False)
+            assert resp.status_code == 302
+            assert app.warmup_scheduler is not None
+            assert isinstance(app.warmup_scheduler, WarmupScheduler)
+
+
+def test_logout_cancels_warmup_scheduler():
+    from ruckus_dashboard.app import create_app
+    from ruckus_dashboard.infra.warmup import WarmupScheduler
+    from unittest.mock import MagicMock
+
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+    fake_scheduler = MagicMock(spec=WarmupScheduler)
+    app.warmup_scheduler = fake_scheduler
+
+    with app.test_client() as c:
+        c.get("/")
+        with c.session_transaction() as s:
+            s["auth"] = True
+            s["connection_ids"] = []
+            token = s["csrf_token"]
+        resp = c.post("/logout", data={"csrf_token": token}, follow_redirects=False)
+        assert resp.status_code in (200, 302)
+        fake_scheduler.cancel.assert_called_once()
+        assert app.warmup_scheduler is None

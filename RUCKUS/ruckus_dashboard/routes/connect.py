@@ -65,6 +65,24 @@ def connect():
     # the dashboard still works with an empty ops set, modules just render
     # the disabled envelope until a controller surfaces the OpenAPI doc.
     _refresh_available_ops(connection)
+
+    from ..infra.warmup import WarmupScheduler
+    from ..modules import MODULES
+
+    if getattr(current_app, "warmup_scheduler", None) is not None:
+        current_app.warmup_scheduler.cancel()
+
+    scheduler = WarmupScheduler(
+        connection=connection,
+        config=dict(current_app.config),
+        modules=dict(MODULES),
+        available_ops=set(current_app.available_ops),
+        max_workers=int(current_app.config.get("RUCKUS_WARMUP_WORKERS", 4)),
+        timeout=float(current_app.config.get("RUCKUS_WARMUP_TIMEOUT", 30.0)),
+    )
+    current_app.warmup_scheduler = scheduler
+    scheduler.run_in_thread()
+
     return redirect(url_for("pages.index"))
 
 
@@ -79,6 +97,10 @@ def logout():
             except Exception:  # noqa: BLE001 — best-effort logout
                 LOG.warning("smartzone logout cleanup failed", exc_info=True)
         current_app.connection_store.remove(cid)
+
+    if getattr(current_app, "warmup_scheduler", None) is not None:
+        current_app.warmup_scheduler.cancel()
+        current_app.warmup_scheduler = None
 
     csrf_token = session.get("csrf_token", secrets.token_urlsafe(32))
     session.clear()

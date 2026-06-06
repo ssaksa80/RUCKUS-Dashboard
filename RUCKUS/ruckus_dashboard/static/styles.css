@@ -92,3 +92,17 @@ body.dso-mode .kpi-value { font-size: 48px; }
 .message.warning { background: #2b2413; color: var(--watch); border: 1px solid var(--watch); }
 .message.info { background: #11252b; color: var(--accent); border: 1px solid var(--accent); }
 .logout-form { display: inline; margin-left: 8px; }
+
+
+.warmup-strip { display: flex; align-items: center; gap: 12px;
+                padding: 10px 14px; background: var(--surface-soft);
+                border: 1px solid var(--border); border-radius: 8px;
+                margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+.warmup-strip[hidden] { display: none; }
+.warmup-bar { flex: 1; height: 6px; background: var(--rail); border-radius: 999px; overflow: hidden; }
+.warmup-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.3s; }
+.warmup-text { white-space: nowrap; font-weight: 700; }
+.tile-skeleton { color: var(--muted); opacity: 0.55; font-weight: 400; }
+.tile[data-tile-status="done"] .tile-value { color: var(--text); }
+.tile[data-tile-status="failed"] .tile-value { color: var(--critical); }
+.tile[data-tile-status="disabled"] .tile-value { color: var(--muted); }
