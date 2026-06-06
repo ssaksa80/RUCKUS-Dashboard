@@ -47,3 +47,44 @@ def test_status_reflects_scheduler_snapshot():
         assert body["states"]["aps"]["status"] == "running"
         assert body["states"]["wlans"]["status"] == "done"
         assert body["states"]["wlans"]["summary"] == {"total": 12}
+
+
+import time
+
+def test_sse_endpoint_streams_events():
+    app = _make_authed_app()
+    fake = MagicMock(spec=WarmupScheduler)
+    fake.is_complete.side_effect = [False, True]
+    fake.snapshot.return_value = {
+        "aps": WarmupStatus(slug="aps", status="done", summary={"total": 5}),
+    }
+    listener_event = MagicMock()
+    listener_event.wait = MagicMock(return_value=True)
+    listener_event.clear = MagicMock()
+    fake.add_listener.return_value = listener_event
+
+    app.warmup_scheduler = fake
+
+    with app.test_client() as c:
+        with c.session_transaction() as s:
+            s["auth"] = True
+        r = c.get("/api/warmup", buffered=False)
+        assert r.status_code == 200
+        assert r.headers["Content-Type"].startswith("text/event-stream")
+
+        data = b""
+        for chunk in r.response:
+            data += chunk
+            if b"event: complete" in data or len(data) > 4096:
+                break
+        text = data.decode()
+        assert "event: module-ready" in text
+        assert "aps" in text
+        assert "event: complete" in text
+
+
+def test_sse_endpoint_requires_auth():
+    app = _make_authed_app()
+    with app.test_client() as c:
+        r = c.get("/api/warmup")
+        assert r.status_code == 401
