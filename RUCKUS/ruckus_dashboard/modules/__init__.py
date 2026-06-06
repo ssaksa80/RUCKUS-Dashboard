@@ -25,3 +25,4 @@ from . import zones  # noqa: F401,E402
 from . import wlans  # noqa: F401,E402
 from . import clients  # noqa: F401,E402
 from . import alarms  # noqa: F401,E402
+from . import rogues  # noqa: F401,E402
