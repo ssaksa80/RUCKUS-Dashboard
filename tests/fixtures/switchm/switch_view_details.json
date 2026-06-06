@@ -1,0 +1,8 @@
+{"list": [
+  {"id": "s1", "name": "SW-1", "model": "ICX7150-24P",
+   "ip": "10.0.0.1", "status": "Online", "stackId": "s1",
+   "firmware": "08.0.95", "uptime": 864000, "portsOnline": 22, "portsTotal": 24},
+  {"id": "s2", "name": "SW-2", "model": "ICX7250-48P",
+   "ip": "10.0.0.2", "status": "Offline", "stackId": "s2",
+   "firmware": "08.0.95", "uptime": 0, "portsOnline": 0, "portsTotal": 48}
+], "totalCount": 2, "hasMore": false}
