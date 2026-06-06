@@ -27,3 +27,4 @@ from . import clients  # noqa: F401,E402
 from . import alarms  # noqa: F401,E402
 from . import rogues  # noqa: F401,E402
 from . import controller  # noqa: F401,E402
+from . import overview  # noqa: F401,E402
