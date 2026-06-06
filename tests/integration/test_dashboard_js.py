@@ -11,3 +11,15 @@ def test_dashboard_js_served_and_has_router():
                        "renderModule", "renderTile",
                        "document.hidden", "fetch("]:
             assert symbol in body, f"missing JS symbol: {symbol}"
+
+
+def test_dashboard_js_contains_warmup_integration():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        r = c.get("/static/dashboard.js")
+        body = r.data.decode()
+        for symbol in ["startWarmupStream", "updateTile", "EventSource",
+                       "/api/warmup", "module-ready", "data-warmup-strip",
+                       "data-tile-status"]:
+            assert symbol in body, f"missing symbol: {symbol}"

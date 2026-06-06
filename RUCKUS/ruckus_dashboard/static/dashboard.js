@@ -100,6 +100,78 @@ function showErrorBanner(msg) {
   if (eb) { eb.hidden = false; eb.textContent = msg; }
 }
 
+function startWarmupStream() {
+  const strip = document.querySelector("[data-warmup-strip]");
+  if (!strip) return;
+  strip.hidden = false;
+
+  const tiles = Array.from(document.querySelectorAll(".tile[data-slug]"));
+  const total = tiles.length;
+  let done = 0;
+  const bar = document.querySelector("[data-warmup-fill]");
+  const text = document.querySelector("[data-warmup-text]");
+
+  const updateTile = (payload) => {
+    const tile = document.querySelector(`.tile[data-slug="${payload.slug}"]`);
+    if (!tile) return;
+    // sets data-tile-status attribute via camelCase dataset API
+    tile.dataset.tileStatus = payload.status;
+    const val = tile.querySelector(`[data-tile-value="${payload.slug}"]`);
+    if (!val) return;
+    if (payload.status === "done") {
+      const s = payload.summary || {};
+      val.textContent = s.total ?? s.count ?? Object.values(s)[0] ?? "0";
+    } else if (payload.status === "failed" || payload.status === "timed_out") {
+      val.textContent = "!";
+      val.title = payload.error_message || "";
+    } else if (payload.status === "disabled") {
+      val.textContent = "—";
+      val.title = "controller missing required ops";
+    } else if (payload.status === "skipped") {
+      val.textContent = "·";
+    }
+    done += 1;
+    if (bar) bar.style.width = `${Math.round(100 * done / total)}%`;
+    if (text) text.textContent = `Discovering RUCKUS controller… ${done}/${total}`;
+  };
+
+  const finish = () => { strip.hidden = true; };
+
+  try {
+    const es = new EventSource("/api/warmup");
+    es.addEventListener("module-ready", (e) => {
+      try { updateTile(JSON.parse(e.data)); } catch {}
+    });
+    es.addEventListener("complete", () => { es.close(); finish(); });
+    es.onerror = () => {
+      es.close();
+      const poll = () => {
+        fetch("/api/warmup/status", { credentials: "same-origin" })
+          .then(r => r.ok ? r.json() : null)
+          .then(p => {
+            if (!p) return;
+            Object.values(p.states || {}).forEach(updateTile);
+            if (p.complete) finish();
+            else setTimeout(poll, 2000);
+          }).catch(() => setTimeout(poll, 2000));
+      };
+      poll();
+    };
+  } catch {
+    const poll = () => {
+      fetch("/api/warmup/status", { credentials: "same-origin" })
+        .then(r => r.ok ? r.json() : null)
+        .then(p => {
+          if (!p) return;
+          Object.values(p.states || {}).forEach(updateTile);
+          if (p.complete) finish();
+          else setTimeout(poll, 2000);
+        }).catch(() => setTimeout(poll, 2000));
+    };
+    poll();
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const root = document.querySelector(".module");
   if (root) {
@@ -116,14 +188,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const dso = document.getElementById("dso-toggle");
   if (dso) dso.addEventListener("click", () => document.body.classList.toggle("dso-mode"));
 
-  document.querySelectorAll(".tile[data-slug]").forEach(el => {
-    const slug = el.dataset.slug;
-    fetch(`/api/modules/${slug}`, { credentials: "same-origin" })
-      .then(r => r.ok ? r.json() : null)
-      .then(p => {
-        if (!p) return;
-        const val = (p.summary && (p.summary.count ?? Object.values(p.summary)[0])) ?? "—";
-        renderTile(slug, val);
-      }).catch(() => {});
-  });
+  // Overview page: warmup-driven tile loading
+  if (document.querySelector("[data-warmup-strip]")) {
+    startWarmupStream();
+  }
 });
