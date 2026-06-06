@@ -36,6 +36,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.profile_store = ProfileStore(app.instance_path, app.secrets_manager)
     app.config["RUCKUS_HOST_ALLOWLIST"] = HostAllowList(app.config.get("RUCKUS_ALLOWED_HOSTS", ""))
     app.module_cache = ModuleResultCache()
+    app.warmup_scheduler = None
     app.inflight = InFlightDeduper()
     # Capability discovery populates this set on connect; modules consult it
     # via CapabilityGate. Initialised empty so unauthenticated requests don't
