@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RUCKUS DSO Dashboard — Connect</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="login-body">
+<main class="login-shell">
+  <header class="login-brand">
+    <img class="brand-logo" src="{{ url_for('static', filename='assets/ruckus-logo.png') }}" alt="RUCKUS">
+    <h1>DSO Dashboard</h1>
+  </header>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="messages">
+      {% for category, message in messages %}
+      <div class="message {{ category }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  {% endwith %}
+
+  <form method="post" action="{{ url_for('connect.connect') }}" class="connect-form" id="connect-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="platform-selector" role="group" aria-label="Management platform">
+      <label class="platform-option">
+        <input type="radio" name="platform" value="smartzone" checked>
+        <span>SmartZone</span>
+      </label>
+      <label class="platform-option">
+        <input type="radio" name="platform" value="ruckus_one">
+        <span>RUCKUS One</span>
+      </label>
+    </div>
+
+    <div class="form-grid platform-fields" data-platform-fields="smartzone">
+      <label><span>SmartZone Controller</span>
+        <input name="smartzone_host" autocomplete="off"
+               placeholder="10.0.0.10 or sz.example.com"></label>
+      <label><span>API Version</span>
+        <select name="smartzone_api_version">
+          <option value="auto" selected>Auto</option>
+          <option value="v9_0">v9_0</option>
+          <option value="v10_0">v10_0</option>
+          <option value="v11_0">v11_0</option>
+        </select></label>
+      <label><span>Username</span>
+        <input name="smartzone_username" autocomplete="username"></label>
+      <label><span>Password</span>
+        <input type="password" name="smartzone_password"
+               autocomplete="current-password"></label>
+      <label class="checkbox-label">
+        <input type="checkbox" name="smartzone_skip_tls_verify" value="1">
+        <span>Allow self-signed SmartZone TLS certificate (lab only)</span></label>
+    </div>
+
+    <div class="form-grid platform-fields hidden" data-platform-fields="ruckus_one">
+      <label><span>Region</span>
+        <select name="ruckus_one_region">
+          <option value="na" selected>North America</option>
+          <option value="eu">Europe</option>
+          <option value="asia">Asia Pacific</option>
+          <option value="custom">Custom</option>
+        </select></label>
+      <label><span>Custom Region Host</span>
+        <input name="ruckus_one_custom_host" autocomplete="off"
+               placeholder="api.example.ruckus.cloud"></label>
+      <label><span>Tenant ID</span>
+        <input name="tenant_id" autocomplete="off"></label>
+      <label><span>Client ID</span>
+        <input name="client_id" autocomplete="off"></label>
+      <label><span>Client Secret</span>
+        <input type="password" name="client_secret"
+               autocomplete="current-password"></label>
+    </div>
+
+    <div class="connect-actions">
+      <p class="security-note">Secrets are exchanged for a temporary platform token. Nothing is persisted to disk during this session.</p>
+      <button class="button primary" type="submit">Connect</button>
+    </div>
+  </form>
+</main>
+
+<script>
+(function () {
+  // Toggle visibility of the per-platform field group based on the radio.
+  var radios = document.querySelectorAll('input[name="platform"]');
+  function refresh() {
+    var selected = document.querySelector('input[name="platform"]:checked');
+    var value = selected ? selected.value : 'smartzone';
+    document.querySelectorAll('[data-platform-fields]').forEach(function (el) {
+      if (el.getAttribute('data-platform-fields') === value) {
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
+      }
+    });
+  }
+  radios.forEach(function (r) { r.addEventListener('change', refresh); });
+  refresh();
+})();
+</script>
+</body>
+</html>

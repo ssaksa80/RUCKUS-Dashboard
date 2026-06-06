@@ -11,6 +11,9 @@ bp = Blueprint("pages", __name__)
 def index():
     if not current_app.config.get("RUCKUS_ENABLE_NEW_UI"):
         return render_template("legacy.html")
+    if not session.get("auth"):
+        return render_template("login.html",
+                               csrf_token=session.get("csrf_token", ""))
     return render_template("overview.html",
                            modules=all_modules(),
                            csrf_token=session.get("csrf_token", ""))
