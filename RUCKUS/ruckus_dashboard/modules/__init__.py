@@ -22,3 +22,4 @@ from . import _registry  # noqa: F401,E402
 # (Plan 2b Tasks 2-9 will append entries here)
 from . import aps  # noqa: F401,E402
 from . import zones  # noqa: F401,E402
+from . import wlans  # noqa: F401,E402

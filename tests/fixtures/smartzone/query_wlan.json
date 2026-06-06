@@ -1,0 +1,8 @@
+{"list": [
+  {"id": "w1", "name": "Corp", "zoneId": "z1", "zoneName": "HQ",
+   "vlanId": 10, "authType": "8021X", "encryption": "WPA2",
+   "numClients": 45},
+  {"id": "w2", "name": "Guest", "zoneId": "z1", "zoneName": "HQ",
+   "vlanId": 20, "authType": "OPEN", "encryption": "NONE",
+   "numClients": 12}
+], "totalCount": 2}
