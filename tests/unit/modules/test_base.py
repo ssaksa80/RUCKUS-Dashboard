@@ -46,3 +46,38 @@ def test_module_spec_slug_kebab_case_only():
             requires_platforms=("smartzone",), requires_capabilities=(),
             supports_views=("table",),
         )
+
+
+def test_module_spec_warmup_defaults_true():
+    spec = ModuleSpec(
+        slug="x", title="X", group="Wireless", icon="?",
+        poll_seconds=30, fetcher=noop_fetcher, drill_fetcher=None,
+        drill_tabs=(), summary_fn=noop_summary,
+        requires_platforms=("smartzone",), requires_capabilities=(),
+        supports_views=("table",),
+    )
+    assert spec.warmup is True
+    assert spec.merge is None
+
+
+def test_module_spec_warmup_false_when_set():
+    spec = ModuleSpec(
+        slug="x2", title="X2", group="Wireless", icon="?",
+        poll_seconds=30, fetcher=noop_fetcher, drill_fetcher=None,
+        drill_tabs=(), summary_fn=noop_summary,
+        requires_platforms=("smartzone",), requires_capabilities=(),
+        supports_views=("table",), warmup=False,
+    )
+    assert spec.warmup is False
+
+
+def test_module_spec_merge_function_attaches():
+    def my_merge(results): return {"items": []}
+    spec = ModuleSpec(
+        slug="x3", title="X3", group="Wireless", icon="?",
+        poll_seconds=30, fetcher=noop_fetcher, drill_fetcher=None,
+        drill_tabs=(), summary_fn=noop_summary,
+        requires_platforms=("smartzone",), requires_capabilities=(),
+        supports_views=("table",), merge=my_merge,
+    )
+    assert spec.merge is my_merge

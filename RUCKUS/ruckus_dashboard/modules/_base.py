@@ -40,6 +40,8 @@ class ModuleSpec:
     requires_platforms: tuple[str, ...]
     requires_capabilities: tuple[tuple[str, str], ...]
     supports_views: tuple[str, ...]
+    warmup: bool = True
+    merge: Callable[[list[dict]], dict] | None = None
 
     def __post_init__(self) -> None:
         if not SLUG_RE.match(self.slug):
