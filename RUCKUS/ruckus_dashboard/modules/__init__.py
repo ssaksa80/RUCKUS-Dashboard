@@ -21,3 +21,4 @@ from . import _registry  # noqa: F401,E402
 # Real modules below — each subsequent import overrides its stub.
 # (Plan 2b Tasks 2-9 will append entries here)
 from . import aps  # noqa: F401,E402
+from . import zones  # noqa: F401,E402

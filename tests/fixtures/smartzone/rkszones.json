@@ -1,0 +1,8 @@
+{"list": [
+  {"id": "z1", "name": "HQ", "countryCode": "AE",
+   "version": "7.0.0.300", "meshMode": "Disabled",
+   "apCount": 24, "wlanCount": 8},
+  {"id": "z2", "name": "DXB-Branch", "countryCode": "AE",
+   "version": "7.0.0.300", "meshMode": "Disabled",
+   "apCount": 6, "wlanCount": 4}
+], "totalCount": 2, "hasMore": false}
