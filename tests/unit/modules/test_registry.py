@@ -31,3 +31,13 @@ def test_all_other_modules_warmup_enabled():
     from ruckus_dashboard.modules import MODULES
     warmup_disabled = {slug for slug, m in MODULES.items() if not m.warmup}
     assert warmup_disabled == {"api-explorer"}
+
+
+def test_registry_has_18_modules_after_wireless_promoted():
+    from ruckus_dashboard.modules import MODULES
+    assert len(MODULES) == 18
+    from ruckus_dashboard.modules._stub import stub_fetcher
+    for slug in ("overview","zones","aps","wlans","clients","alarms","rogues","controller"):
+        assert MODULES[slug].fetcher is not stub_fetcher, f"{slug} still a stub"
+    for slug in ("switches","ports","firmware","security"):
+        assert MODULES[slug].fetcher is stub_fetcher, f"{slug} should still be stub"
