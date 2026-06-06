@@ -23,3 +23,4 @@ from . import _registry  # noqa: F401,E402
 from . import aps  # noqa: F401,E402
 from . import zones  # noqa: F401,E402
 from . import wlans  # noqa: F401,E402
+from . import clients  # noqa: F401,E402
