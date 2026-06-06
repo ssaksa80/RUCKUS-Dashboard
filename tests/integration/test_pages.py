@@ -43,3 +43,17 @@ def test_unknown_module_page_404():
     with app.test_client() as c:
         r = c.get("/m/does-not-exist")
         assert r.status_code == 404
+
+
+def test_overview_renders_warmup_strip_when_authenticated():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+    with app.test_client() as c:
+        c.get("/")
+        with c.session_transaction() as s:
+            s["auth"] = True
+            s["connection_ids"] = []
+        r = c.get("/")
+        assert r.status_code == 200
+        assert b"warmup-strip" in r.data
+        assert b"tile-skeleton" in r.data
