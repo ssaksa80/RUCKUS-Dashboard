@@ -52,6 +52,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     from .routes.connect import bp as connect_bp
     app.register_blueprint(connect_bp)
 
+    from .routes.warmup import bp as warmup_bp
+    app.register_blueprint(warmup_bp)
+
     @app.after_request
     def security_headers(response):
         response.headers.setdefault("X-Frame-Options", "DENY")
