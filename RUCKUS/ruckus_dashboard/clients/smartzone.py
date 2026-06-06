@@ -19,7 +19,7 @@ Source line ranges (monolith):
 * ``_fetch_smartzone_inventory``                -- 1098-1240
 * ``_fetch_smartzone_operational``              -- 1242-1278
 * ``_aggregate_ap_status`` / ``_empty_ap_stats``-- 1360-1393
-* ``_smartzone_alarm_summary``                  -- 1415-1438
+* ``smartzone_alarm_summary``                   -- 1415-1438
 * paged / get / post helpers                    -- 1834-1931
 * posture / catalog / activity helpers          -- 1989-2154
 * ``_connection_payload``                       -- 2157-2167
@@ -279,7 +279,7 @@ def _fetch_smartzone_inventory(
     """
     debug: list[dict[str, Any]] = []
     try:
-        zones = _smartzone_paged_get(connection, "rkszones", config, debug=debug)
+        zones = smartzone_paged_get(connection, "rkszones", config, debug=debug)
     except RuckusClientError as exc:
         debug.append({"label": "GET /rkszones", "status": exc.status_code})
         zones = []
@@ -292,7 +292,7 @@ def _fetch_smartzone_inventory(
         zone_id = str(_first_value(zone, ["id", "zoneId"]) or "")
         if not zone_id:
             continue
-        zone_detail = _smartzone_optional_get(
+        zone_detail = smartzone_optional_get(
             connection, f"rkszones/{quote(zone_id)}", config, debug=debug
         )
         zone_name = str(
@@ -301,7 +301,7 @@ def _fetch_smartzone_inventory(
         zone_firmware = str(
             _first_value(zone_detail or {}, ["version", "firmwareVersion"]) or ""
         )
-        firmware_catalog = _smartzone_optional_get(
+        firmware_catalog = smartzone_optional_get(
             connection, f"rkszones/{quote(zone_id)}/apFirmware", config, debug=debug
         )
         catalog_items = _extract_items(firmware_catalog)
@@ -337,14 +337,14 @@ def _fetch_smartzone_inventory(
             )
         )
 
-    ap_rows = _smartzone_query_paged(
+    ap_rows = smartzone_query_paged(
         connection, "query/ap", config, debug, optional=True
     )
     used_query = bool(ap_rows)
     if not ap_rows:
         ap_rows = []
         for zone_id in zone_map:
-            zone_aps = _smartzone_paged_get(
+            zone_aps = smartzone_paged_get(
                 connection, "aps", config, params={"zoneId": zone_id}, debug=debug
             )
             for ap in zone_aps:
@@ -376,7 +376,7 @@ def _fetch_smartzone_inventory(
         mac = _first_value(merged_ap, ["mac", "apMac", "macAddress"])
         if detail_budget > 0 and _smartzone_ap_needs_detail(merged_ap) and mac:
             detail_budget -= 1
-            details = _smartzone_optional_get(
+            details = smartzone_optional_get(
                 connection,
                 f"aps/{quote(str(mac), safe='')}",
                 config,
@@ -440,15 +440,15 @@ def _fetch_smartzone_operational(
 ) -> dict[str, Any]:
     debug: list[dict[str, Any]] = []
 
-    aps = _smartzone_query_paged(
+    aps = smartzone_query_paged(
         connection, "query/ap", config, debug, optional=True
     )
     if not aps:
-        aps = _smartzone_paged_get(connection, "aps", config, debug=debug)
+        aps = smartzone_paged_get(connection, "aps", config, debug=debug)
     ap_stats = _aggregate_ap_status(aps)
 
     client_total = ap_stats["clients"]
-    client_query = _smartzone_post(
+    client_query = smartzone_post(
         connection, "query/client", config, {"limit": 1}, debug, optional=True
     )
     if isinstance(client_query, dict):
@@ -458,7 +458,7 @@ def _fetch_smartzone_operational(
         if explicit >= 0:
             client_total = explicit
 
-    alarms = _smartzone_alarm_summary(connection, config, debug)
+    alarms = smartzone_alarm_summary(connection, config, debug)
 
     # Switch health lives in its own module (clients/switchm.py) because the
     # /switchm/api surface has a different version line and URL prefix.
@@ -521,12 +521,12 @@ def _aggregate_ap_status(aps: list[dict[str, Any]]) -> dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Alarms (monolith 1415-1438)
 # ─────────────────────────────────────────────────────────────────────────────
-def _smartzone_alarm_summary(
+def smartzone_alarm_summary(
     connection: ConnectionConfig,
     config: dict[str, Any],
     debug: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    data = _smartzone_post(
+    data = smartzone_post(
         connection, "alert/alarmSummary", config, {}, debug, optional=True
     )
     if not isinstance(data, dict):
@@ -585,7 +585,7 @@ def _version_key(version: str) -> tuple[int, ...]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Paged / GET / POST helpers (monolith 1834-1931)
 # ─────────────────────────────────────────────────────────────────────────────
-def _smartzone_paged_get(
+def smartzone_paged_get(
     connection: ConnectionConfig,
     path: str,
     config: dict[str, Any],
@@ -598,7 +598,7 @@ def _smartzone_paged_get(
     records: list[dict[str, Any]] = []
     while True:
         page_params = {"index": index, "listSize": page_size, **(params or {})}
-        data = _smartzone_get(connection, path, config, page_params, debug)
+        data = smartzone_get(connection, path, config, page_params, debug)
         items = _extract_items(data)
         records.extend([item for item in items if isinstance(item, dict)])
         if not isinstance(data, dict) or not data.get("hasMore") or not items:
@@ -607,7 +607,7 @@ def _smartzone_paged_get(
     return records
 
 
-def _smartzone_get(
+def smartzone_get(
     connection: ConnectionConfig,
     path: str,
     config: dict[str, Any],
@@ -631,7 +631,7 @@ def _smartzone_get(
     return result
 
 
-def _smartzone_optional_get(
+def smartzone_optional_get(
     connection: ConnectionConfig,
     path: str,
     config: dict[str, Any],
@@ -639,13 +639,13 @@ def _smartzone_optional_get(
     debug: list[dict[str, Any]],
 ) -> Any | None:
     try:
-        return _smartzone_get(connection, path, config, None, debug)
+        return smartzone_get(connection, path, config, None, debug)
     except RuckusClientError as exc:
         debug.append({"label": f"GET /{path}", "status": exc.status_code})
         return None
 
 
-def _smartzone_post(
+def smartzone_post(
     connection: ConnectionConfig,
     path: str,
     config: dict[str, Any],
@@ -673,7 +673,7 @@ def _smartzone_post(
         raise
 
 
-def _smartzone_query_paged(
+def smartzone_query_paged(
     connection: ConnectionConfig,
     path: str,
     config: dict[str, Any],
@@ -687,7 +687,7 @@ def _smartzone_query_paged(
     records: list[dict[str, Any]] = []
     while True:
         payload = {"page": page, "limit": limit, **(body or {})}
-        data = _smartzone_post(connection, path, config, payload, debug, optional=optional)
+        data = smartzone_post(connection, path, config, payload, debug, optional=optional)
         if data is None:
             break
         items = _extract_items(data)
