@@ -39,6 +39,10 @@
       <div class="breadcrumb">{% block breadcrumb %}{% endblock %}</div>
       <div class="topbar-actions">
         <button class="dso-toggle" id="dso-toggle" title="Toggle DSO wall mode">⛶ DSO</button>
+        <form method="post" action="{{ url_for('connect.logout') }}" class="logout-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="button secondary" type="submit">Logout</button>
+        </form>
       </div>
     </header>
     {% block content %}{% endblock %}

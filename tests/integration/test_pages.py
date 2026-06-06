@@ -11,8 +11,19 @@ def test_root_renders_legacy_when_flag_off():
 
 
 def test_root_renders_new_ui_when_flag_on():
+    # With the login flow landed (Task 32), GET / shows the login form when
+    # unauthenticated. Once a session has auth=True we should see the
+    # sidebar overview shell.
     app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
     with app.test_client() as c:
+        # Unauthenticated -> login form.
+        r_login = c.get("/")
+        assert r_login.status_code == 200
+        assert b'name="platform"' in r_login.data
+        # Inject an authenticated session and re-request.
+        with c.session_transaction() as s:
+            s["auth"] = True
+            s["connection_ids"] = []
         r = c.get("/")
         assert r.status_code == 200
         assert b"DSO Overview" in r.data

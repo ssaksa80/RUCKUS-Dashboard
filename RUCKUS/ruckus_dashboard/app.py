@@ -37,12 +37,19 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.config["RUCKUS_HOST_ALLOWLIST"] = HostAllowList(app.config.get("RUCKUS_ALLOWED_HOSTS", ""))
     app.module_cache = ModuleResultCache()
     app.inflight = InFlightDeduper()
+    # Capability discovery populates this set on connect; modules consult it
+    # via CapabilityGate. Initialised empty so unauthenticated requests don't
+    # AttributeError before any controller is reachable.
+    app.available_ops = set()
 
     from .routes.modules import bp as modules_bp
     app.register_blueprint(modules_bp)
 
     from .routes.pages import bp as pages_bp
     app.register_blueprint(pages_bp)
+
+    from .routes.connect import bp as connect_bp
+    app.register_blueprint(connect_bp)
 
     @app.after_request
     def security_headers(response):
