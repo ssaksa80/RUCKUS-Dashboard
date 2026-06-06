@@ -20,3 +20,14 @@ def test_modules_grouped_correctly():
     assert "overview" in by_group["Wireless"]
     assert "switches" in by_group["Switching"]
     assert "firmware" in by_group["Cross-cutting"]
+
+
+def test_api_explorer_excluded_from_warmup():
+    from ruckus_dashboard.modules import MODULES
+    assert MODULES["api-explorer"].warmup is False
+
+
+def test_all_other_modules_warmup_enabled():
+    from ruckus_dashboard.modules import MODULES
+    warmup_disabled = {slug for slug, m in MODULES.items() if not m.warmup}
+    assert warmup_disabled == {"api-explorer"}
