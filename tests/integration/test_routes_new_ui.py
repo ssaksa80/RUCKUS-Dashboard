@@ -25,3 +25,19 @@ def test_unknown_module_404():
     with app.test_client() as c:
         r = c.get("/api/modules/does-not-exist")
         assert r.status_code == 404
+
+
+def test_drill_route_unauthenticated_401():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+    with app.test_client() as c:
+        r = c.get("/api/modules/aps/AB:CD:EF:01:02:03")
+        assert r.status_code == 401
+
+
+def test_drill_route_unknown_module_404():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+    with app.test_client() as c:
+        r = c.get("/api/modules/does-not-exist/abc")
+        assert r.status_code == 404

@@ -63,3 +63,33 @@ def module_data(slug: str):
     summary = spec.summary_fn(merged)
     env = build_envelope(data=merged, summary=summary, errors=[])
     return jsonify(env)
+
+
+@bp.get("/api/modules/<slug>/<entity_id>")
+def module_drill(slug: str, entity_id: str):
+    spec = MODULES.get(slug)
+    if spec is None:
+        abort(404, description=f"unknown module: {slug}")
+    if not session.get("auth"):
+        return jsonify({"error": "Connection expired. Please reconnect.", "reauth": True}), 401
+    if spec.drill_fetcher is None:
+        return jsonify({"error": "Module has no drill-in.", "slug": slug}), 404
+
+    conn_ids = tuple(session.get("connection_ids", []))
+    pairs = [(cid, current_app.connection_store.get(cid)) for cid in conn_ids]
+    pairs = [(cid, c) for cid, c in pairs if c is not None]
+    if not pairs:
+        return jsonify({"error": "Connection expired.", "reauth": True}), 401
+
+    gate = CapabilityGate(available=getattr(current_app, "available_ops", set()))
+    filters = request.args.to_dict()
+    _, conn = pairs[0]
+    ctx = FetcherContext(connection=conn, config=dict(current_app.config),
+                         filters=filters, capability_gate=gate,
+                         connection_label=conn.display_name)
+    try:
+        data = spec.drill_fetcher(ctx, entity_id)
+    except Exception as exc:
+        return jsonify({"error": str(exc), "slug": slug, "entity_id": entity_id}), 502
+    env = build_envelope(data=data, summary={}, errors=[])
+    return jsonify(env)

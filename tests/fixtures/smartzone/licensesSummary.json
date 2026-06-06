@@ -1,0 +1,4 @@
+{"summary": [
+  {"licenseType": "RUCKUS_AP_CAPACITY", "totalCount": 100, "consumedCount": 30},
+  {"licenseType": "RUCKUS_SWITCH_CAPACITY", "totalCount": 25, "consumedCount": 8}
+]}

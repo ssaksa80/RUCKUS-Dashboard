@@ -1,4 +1,11 @@
-"""Registers all 18 module shells with stub fetchers."""
+"""Registers switching + cross-cutting module shells with stub fetchers.
+
+Wireless modules (overview, zones, aps, wlans, clients, alarms, rogues,
+controller) are real implementations registered by their own module files
+in ``__init__.py`` — they are no longer stubbed here.
+
+Plans 2c/2d will promote the remaining 10 stubs to real implementations.
+"""
 from __future__ import annotations
 from . import register
 from ._base import ModuleSpec
@@ -6,14 +13,6 @@ from ._stub import stub_fetcher, stub_summary
 
 _DEFS = [
     # (slug, title, group, icon, poll, caps, warmup)
-    ("overview",      "DSO Overview",        "Wireless",      "📡", 15, (), True),
-    ("zones",         "Zones",               "Wireless",      "🏢", 60, (("GET", "/rkszones"),), True),
-    ("aps",           "Access Points",       "Wireless",      "📶", 30, (("POST", "/query/ap"),), True),
-    ("wlans",         "WLANs",               "Wireless",      "🌐", 60, (("POST", "/query/wlan"),), True),
-    ("clients",       "Wireless Clients",    "Wireless",      "👥", 20, (("POST", "/query/client"),), True),
-    ("alarms",        "Alarms & Events",     "Wireless",      "🚨", 10, (("POST", "/alert/alarmSummary"),), True),
-    ("rogues",        "Rogues",              "Wireless",      "👻", 60, (("POST", "/query/roguesInfoList"),), True),
-    ("controller",    "Controller",          "Wireless",      "🎛️", 120, (("GET", "/cluster/state"),), True),
     ("switches",      "Switches",            "Switching",     "🔌", 60, (("POST", "/switch/view/details"),), True),
     ("switch-groups", "Switch Groups",       "Switching",     "🗂️", 120, (), True),
     ("ports",         "Ports",               "Switching",     "🔗", 30, (("POST", "/switch/ports/summary"),), True),

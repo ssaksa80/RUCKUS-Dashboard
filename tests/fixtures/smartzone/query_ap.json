@@ -1,0 +1,18 @@
+{
+  "list": [
+    {"apMac": "AA:BB:CC:DD:EE:01", "deviceName": "AP-Lobby", "model": "R650",
+     "zoneId": "z1", "zoneName": "HQ", "status": "Online",
+     "numClients": 12, "firmwareVersion": "7.0.0.300", "ip": "10.0.1.21",
+     "lastSeenTime": 1736140000000},
+    {"apMac": "AA:BB:CC:DD:EE:02", "deviceName": "AP-Mtg-3", "model": "R770",
+     "zoneId": "z1", "zoneName": "HQ", "status": "Offline",
+     "numClients": 0, "firmwareVersion": "7.0.0.300", "ip": "10.0.1.22",
+     "lastSeenTime": 1736130000000},
+    {"apMac": "AA:BB:CC:DD:EE:03", "deviceName": "AP-Cafe", "model": "R650",
+     "zoneId": "z2", "zoneName": "DXB", "status": "Flagged",
+     "numClients": 3, "firmwareVersion": "6.1.2.100", "ip": "10.0.2.21",
+     "lastSeenTime": 1736140500000}
+  ],
+  "totalCount": 3,
+  "hasMore": false
+}

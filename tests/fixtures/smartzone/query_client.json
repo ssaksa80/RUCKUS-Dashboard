@@ -1,0 +1,14 @@
+{"list": [
+  {"clientMac": "11:22:33:44:55:01", "hostname": "laptop-1",
+   "ipAddress": "10.0.1.50", "ssid": "Corp", "apMac": "AA:BB:CC:DD:EE:01",
+   "rssi": -52, "rxBytes": 1024000, "txBytes": 256000,
+   "osType": "Windows", "authMethod": "8021X", "connectionTime": 1736140000000},
+  {"clientMac": "11:22:33:44:55:02", "hostname": "phone-2",
+   "ipAddress": "10.0.1.51", "ssid": "Guest", "apMac": "AA:BB:CC:DD:EE:01",
+   "rssi": -68, "rxBytes": 50000, "txBytes": 10000,
+   "osType": "iOS", "authMethod": "OPEN", "connectionTime": 1736140100000},
+  {"clientMac": "11:22:33:44:55:03", "hostname": "tablet-3",
+   "ipAddress": "10.0.1.52", "ssid": "Corp", "apMac": "AA:BB:CC:DD:EE:02",
+   "rssi": -75, "rxBytes": 25000, "txBytes": 5000,
+   "osType": "Android", "authMethod": "8021X", "connectionTime": 1736140200000}
+], "totalCount": 3}

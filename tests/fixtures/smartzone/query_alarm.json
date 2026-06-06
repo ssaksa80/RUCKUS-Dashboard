@@ -1,0 +1,10 @@
+{"list": [
+  {"alarmId": "a1", "severity": "Critical", "category": "AP",
+   "sourceName": "AP-Lobby", "alarmType": "AP down",
+   "firstAppearTime": 1736140000000, "lastAppearTime": 1736140500000,
+   "ackState": "Outstanding", "alarmCount": 1},
+  {"alarmId": "a2", "severity": "Major", "category": "Switch",
+   "sourceName": "SW-1", "alarmType": "Port flap",
+   "firstAppearTime": 1736139000000, "lastAppearTime": 1736140000000,
+   "ackState": "Acknowledged", "alarmCount": 3}
+], "totalCount": 2}
