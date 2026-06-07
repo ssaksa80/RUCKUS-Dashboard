@@ -30,3 +30,4 @@ from . import controller  # noqa: F401,E402
 from . import overview  # noqa: F401,E402
 from . import switches  # noqa: F401,E402
 from . import switch_groups  # noqa: F401,E402
+from . import ports  # noqa: F401,E402
