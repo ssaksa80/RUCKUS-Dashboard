@@ -1,23 +1,20 @@
-"""Registers cross-cutting module shells with stub fetchers.
+"""Empty no-op stub registry — all 18 modules are now real.
 
-Wireless modules (overview, zones, aps, wlans, clients, alarms, rogues,
-controller) and switching modules (switches, switch-groups, ports, traffic,
-poe, stack, vlans) are real implementations registered by their own module
-files in ``__init__.py`` — they are no longer stubbed here.
+Every module slug (8 wireless + 7 switching + 3 cross-cutting) now has a
+real fetcher file that self-registers via its own import in ``__init__.py``.
+No slugs remain stubbed, so ``_DEFS`` is empty.
 
-Plan 2d will promote the remaining 3 stubs to real implementations.
+This module is retained (rather than deleted) so the ``from . import _registry``
+line in ``__init__.py`` stays valid and import order is unchanged. The imports
+below remain valid and ``_stub`` is still referenced by tests.
 """
 from __future__ import annotations
 from . import register
 from ._base import ModuleSpec
 from ._stub import stub_fetcher, stub_summary
 
-_DEFS = [
-    # (slug, title, group, icon, poll, caps, warmup)
-    ("firmware",      "Firmware",            "Cross-cutting", "💾", 120, (), True),
-    ("security",      "Security",            "Cross-cutting", "🔒", 600, (), True),
-    ("api-explorer",  "API Explorer",        "Cross-cutting", "🧭", 600, (), False),
-]
+# All modules promoted to real implementations — nothing left to stub.
+_DEFS: list[tuple] = []
 
 for slug, title, group, icon, poll, caps, warmup_flag in _DEFS:
     register(ModuleSpec(
