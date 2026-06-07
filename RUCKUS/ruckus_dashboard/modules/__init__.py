@@ -15,11 +15,10 @@ def all_modules() -> list[ModuleSpec]:
     return sorted(MODULES.values(), key=lambda m: (m.group, m.title))
 
 
-# Stubs first (covers all 18 slugs initially)
+# Empty no-op registry (all 18 modules are now real; kept for import stability)
 from . import _registry  # noqa: F401,E402
 
-# Real modules below — each subsequent import overrides its stub.
-# (Plan 2b Tasks 2-9 will append entries here)
+# Real modules below — each self-registers at import time. All 18 are real.
 from . import aps  # noqa: F401,E402
 from . import zones  # noqa: F401,E402
 from . import wlans  # noqa: F401,E402
