@@ -38,7 +38,7 @@ def test_registry_has_18_modules_after_wireless_promoted():
     assert len(MODULES) == 18
     from ruckus_dashboard.modules._stub import stub_fetcher
     for slug in ("overview","zones","aps","wlans","clients","alarms","rogues",
-                 "controller","switches"):
+                 "controller","switches","switch-groups"):
         assert MODULES[slug].fetcher is not stub_fetcher, f"{slug} still a stub"
     for slug in ("ports","firmware","security"):
         assert MODULES[slug].fetcher is stub_fetcher, f"{slug} should still be stub"
