@@ -36,3 +36,4 @@ from . import poe  # noqa: F401,E402
 from . import stack  # noqa: F401,E402
 from . import vlans  # noqa: F401,E402
 from . import firmware  # noqa: F401,E402
+from . import security  # noqa: F401,E402
