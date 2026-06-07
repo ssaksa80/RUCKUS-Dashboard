@@ -1,0 +1,6 @@
+{
+  "supportedAPFirmwareList": [
+    {"firmwareVersion": "7.0.0.300", "supported": true},
+    {"firmwareVersion": "6.1.2.100", "supported": false}
+  ]
+}
