@@ -1,0 +1,11 @@
+{"list": [
+  {"switchId": "s1", "switchName": "SW-1", "budgetWatts": 740,
+   "allocatedWatts": 320, "availableWatts": 420,
+   "portsPoweredCount": 22},
+  {"switchId": "s2", "switchName": "SW-2", "budgetWatts": 1480,
+   "allocatedWatts": 900, "availableWatts": 580,
+   "portsPoweredCount": 35},
+  {"switchId": "s3", "switchName": "SW-3", "budgetWatts": 740,
+   "allocatedWatts": 100, "availableWatts": 640,
+   "portsPoweredCount": 8}
+], "totalCount": 3, "hasMore": false}

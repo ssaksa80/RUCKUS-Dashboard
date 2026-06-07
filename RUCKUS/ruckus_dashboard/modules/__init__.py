@@ -32,3 +32,4 @@ from . import switches  # noqa: F401,E402
 from . import switch_groups  # noqa: F401,E402
 from . import ports  # noqa: F401,E402
 from . import traffic  # noqa: F401,E402
+from . import poe  # noqa: F401,E402
