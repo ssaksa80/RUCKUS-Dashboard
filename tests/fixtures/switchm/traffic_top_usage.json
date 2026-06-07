@@ -1,0 +1,8 @@
+{"list": [
+  {"switchId": "s1", "switchName": "SW-1", "totalUsage": 5368709120,
+   "rxBytes": 3221225472, "txBytes": 2147483648},
+  {"switchId": "s2", "switchName": "SW-2", "totalUsage": 1073741824,
+   "rxBytes": 805306368, "txBytes": 268435456},
+  {"switchId": "s3", "switchName": "SW-3", "totalUsage": 536870912,
+   "rxBytes": 268435456, "txBytes": 268435456}
+], "totalCount": 3, "hasMore": false}
