@@ -1,0 +1,8 @@
+{"list": [
+  {"id": "g1", "name": "HQ-Switches", "switchCount": 4, "parentId": null,
+   "tenantId": "default"},
+  {"id": "g2", "name": "Branch-DXB", "switchCount": 2, "parentId": null,
+   "tenantId": "default"},
+  {"id": "g3", "name": "HQ-IDF1", "switchCount": 2, "parentId": "g1",
+   "tenantId": "default"}
+], "totalCount": 3, "hasMore": false}

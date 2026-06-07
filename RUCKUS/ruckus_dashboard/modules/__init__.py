@@ -28,3 +28,10 @@ from . import alarms  # noqa: F401,E402
 from . import rogues  # noqa: F401,E402
 from . import controller  # noqa: F401,E402
 from . import overview  # noqa: F401,E402
+from . import switches  # noqa: F401,E402
+from . import switch_groups  # noqa: F401,E402
+from . import ports  # noqa: F401,E402
+from . import traffic  # noqa: F401,E402
+from . import poe  # noqa: F401,E402
+from . import stack  # noqa: F401,E402
+from . import vlans  # noqa: F401,E402

@@ -1,0 +1,11 @@
+{"list": [
+  {"vlanId": 1, "name": "default",
+   "memberSwitches": ["s1", "s2", "s3"],
+   "taggedPortCount": 0, "untaggedPortCount": 48},
+  {"vlanId": 10, "name": "Corp",
+   "memberSwitches": ["s1", "s2"],
+   "taggedPortCount": 4, "untaggedPortCount": 22},
+  {"vlanId": 20, "name": "Guest",
+   "memberSwitches": ["s1"],
+   "taggedPortCount": 2, "untaggedPortCount": 5}
+], "totalCount": 3, "hasMore": false}
