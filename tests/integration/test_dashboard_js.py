@@ -23,3 +23,14 @@ def test_dashboard_js_contains_warmup_integration():
                        "/api/warmup", "module-ready", "data-warmup-strip",
                        "data-tile-status"]:
             assert symbol in body, f"missing symbol: {symbol}"
+
+
+def test_dashboard_js_contains_columns_filters_rowclick():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        r = c.get("/static/dashboard.js")
+        body = r.data.decode()
+        for symbol in ["renderColumns", "renderFilters", "humanBytes",
+                       "humanUptime", "status-pill", "data-href", "/m/"]:
+            assert symbol in body, f"missing symbol: {symbol}"

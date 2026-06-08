@@ -106,3 +106,19 @@ body.dso-mode .kpi-value { font-size: 48px; }
 .tile[data-tile-status="done"] .tile-value { color: var(--text); }
 .tile[data-tile-status="failed"] .tile-value { color: var(--critical); }
 .tile[data-tile-status="disabled"] .tile-value { color: var(--muted); }
+
+/* Plan 3b — friendly tables + filters */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th { text-align: left; color: var(--muted); font-size: 11px;
+                 text-transform: uppercase; letter-spacing: 0.04em;
+                 padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.data-table td { padding: 8px 10px; border-bottom: 1px solid var(--surface-soft); }
+.data-table tr[data-href] { cursor: pointer; }
+.data-table tr[data-href]:hover { background: var(--surface-soft); }
+.filters { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
+.filter-control { display: inline-flex; align-items: center; gap: 6px;
+                  color: var(--muted); font-size: 12px; }
+.filter-control select, .filter-control[type="search"], .filters input {
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+.empty { color: var(--muted); padding: 16px; }

@@ -13,6 +13,24 @@ def test_module_list_endpoint():
         assert "switches" in slugs
         assert len(slugs) == 18
 
+def test_module_list_includes_columns_and_filters():
+    app = make_app()
+    with app.test_client() as c:
+        r = c.get("/api/modules")
+        assert r.status_code == 200
+        for m in r.json["modules"]:
+            assert "columns" in m, f"{m['slug']} missing columns"
+            assert "filters" in m, f"{m['slug']} missing filters"
+            assert isinstance(m["columns"], list)
+            assert isinstance(m["filters"], list)
+        by_slug = {m["slug"]: m for m in r.json["modules"]}
+        aps = by_slug["aps"]
+        assert aps["columns"], "aps should declare columns"
+        assert {"label", "key", "kind"} <= set(aps["columns"][0].keys())
+        assert aps["filters"], "aps should declare filters"
+        assert {"key", "label", "kind"} <= set(aps["filters"][0].keys())
+
+
 def test_module_data_endpoint_unauthenticated_401():
     app = make_app()
     with app.test_client() as c:

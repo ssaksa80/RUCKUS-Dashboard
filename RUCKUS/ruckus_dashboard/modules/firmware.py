@@ -4,7 +4,7 @@ from typing import Any
 from urllib.parse import quote
 
 from . import register
-from ._base import FetcherContext, ModuleSpec, TabSpec
+from ._base import Column, FetcherContext, ModuleSpec, TabSpec
 from ..clients.smartzone import smartzone_paged_get, smartzone_get
 
 POLL_SECONDS = 120
@@ -102,4 +102,8 @@ register(ModuleSpec(
     requires_capabilities=(("GET", "/rkszones"),),
     supports_views=("table",),
     warmup=True, merge=merge,
+    columns=(
+        Column("Zone", "zone_name"),
+        Column("Latest Supported", "latest_supported"),
+    ),
 ))

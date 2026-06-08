@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import register
-from ._base import FetcherContext, ModuleSpec, TabSpec
+from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
 from ..clients.smartzone import smartzone_post, smartzone_query_body
 
 POLL_SECONDS = 60
@@ -84,4 +84,16 @@ register(ModuleSpec(
     supports_views=("table", "grid"),
     warmup=True,
     merge=merge,
+    columns=(
+        Column("BSSID", "bssid"),
+        Column("SSID", "ssid"),
+        Column("Channel", "channel", "number"),
+        Column("Encryption", "encryption"),
+        Column("RSSI", "rssi", "number"),
+        Column("Detecting AP", "detecting_ap"),
+        Column("Classification", "classification", "status"),
+    ),
+    filters=(
+        Filter("classification", "Class", "select"),
+    ),
 ))

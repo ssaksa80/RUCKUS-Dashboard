@@ -54,7 +54,9 @@ def list_modules():
             {"slug": m.slug, "title": m.title, "group": m.group, "icon": m.icon,
              "poll_seconds": m.poll_seconds, "requires_platforms": list(m.requires_platforms),
              "requires_capabilities": [list(c) for c in m.requires_capabilities],
-             "supports_views": list(m.supports_views)}
+             "supports_views": list(m.supports_views),
+             "columns": [{"label": c.label, "key": c.key, "kind": c.kind} for c in m.columns],
+             "filters": [{"key": f.key, "label": f.label, "kind": f.kind} for f in m.filters]}
             for m in all_modules()
         ]
     })

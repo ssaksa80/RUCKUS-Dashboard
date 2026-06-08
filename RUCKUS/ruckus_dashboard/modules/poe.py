@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import register
-from ._base import FetcherContext, ModuleSpec, TabSpec
+from ._base import Column, FetcherContext, ModuleSpec, TabSpec
 from ..clients.base import RuckusClientError
 from ..clients.switchm import _api_version_fallbacks, switch_manager_post
 
@@ -90,4 +90,12 @@ register(ModuleSpec(
     supports_views=("table",),
     warmup=True,
     merge=merge,
+    columns=(
+        Column("Switch", "switch_name"),
+        Column("Budget W", "budget_w", "number"),
+        Column("Allocated W", "allocated_w", "number"),
+        Column("Available W", "available_w", "number"),
+        Column("Ports Powered", "ports_powered", "number"),
+        Column("Util %", "util_pct", "number"),
+    ),
 ))
