@@ -645,6 +645,31 @@ def smartzone_optional_get(
         return None
 
 
+def smartzone_query_body(filters: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build a standard SmartZone ``/query/*`` POST body.
+
+    The SmartZone public query API is **1-indexed**: ``page`` must be >= 1.
+    SmartZone 7.1.1 rejects ``page=0`` with HTTP 400
+    ``["page"] numeric instance is lower than the required minimum``.
+    Any page < 1 (including the legacy 0 default and negatives) is coerced to 1.
+    """
+    f = filters or {}
+    try:
+        page = int(f.get("page", 1) or 1)
+    except (TypeError, ValueError):
+        page = 1
+    if page < 1:
+        page = 1
+    try:
+        limit = int(f.get("limit", 500) or 500)
+    except (TypeError, ValueError):
+        limit = 500
+    body: dict[str, Any] = {"page": page, "limit": limit}
+    if f.get("zone"):
+        body["filters"] = [{"type": "ZONE_ID", "value": f["zone"]}]
+    return body
+
+
 def smartzone_post(
     connection: ConnectionConfig,
     path: str,
