@@ -3,6 +3,57 @@
 const moduleState = {};
 let activePoller = null;
 
+// Per-slug spec metadata (columns/filters/title) fetched once from /api/modules.
+const moduleSpecs = {};
+// Per-slug client-side filter state: { key: value }.
+const activeFilters = {};
+// Cache of the last items fetched per slug, so filter changes re-render locally.
+const lastItems = {};
+
+async function loadModuleSpecs() {
+  if (Object.keys(moduleSpecs).length) return moduleSpecs;
+  try {
+    const r = await fetch("/api/modules", { credentials: "same-origin" });
+    if (!r.ok) return moduleSpecs;
+    const body = await r.json();
+    (body.modules || []).forEach(m => { moduleSpecs[m.slug] = m; });
+  } catch { /* fall back to raw rendering */ }
+  return moduleSpecs;
+}
+
+function humanBytes(n) {
+  let v = Number(n);
+  if (!isFinite(v) || v <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function humanUptime(seconds) {
+  let s = Number(seconds);
+  if (!isFinite(s) || s <= 0) return "—";
+  const d = Math.floor(s / 86400); s -= d * 86400;
+  const h = Math.floor(s / 3600); s -= h * 3600;
+  const m = Math.floor(s / 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function formatCell(value, kind) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (kind === "status") {
+    const v = String(value).toLowerCase();
+    return `<span class="status-pill status-${v}">${String(value)}</span>`;
+  }
+  if (kind === "bytes") return humanBytes(value);
+  if (kind === "uptime") return humanUptime(value);
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
 function startModulePoller(slug, pollSeconds, entityId) {
   stopModulePoller();
   const tick = () => {
@@ -66,17 +117,10 @@ function renderModule(slug, payload) {
   }
 
   const items = (payload.data && payload.data.items) || [];
-  const area = root.querySelector("[data-data-area]");
-  if (!area) return;
-  if (items.length === 0) {
-    area.innerHTML = `<p class="empty">No results.</p>`;
-    return;
-  }
-  const cols = Object.keys(items[0]);
-  area.innerHTML =
-    `<table class="data-table"><thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead>` +
-    `<tbody>${items.slice(0, 100).map(row =>
-      `<tr>${cols.map(c => `<td>${row[c] ?? ""}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  lastItems[slug] = items;
+  const spec = moduleSpecs[slug] || {};
+  renderFilters(root, slug, spec, items);
+  renderColumns(root, slug, spec, items);
 
   const eb = root.querySelector("[data-error-banner]");
   if (eb) {
@@ -88,6 +132,80 @@ function renderModule(slug, payload) {
       eb.hidden = true;
     }
   }
+}
+
+function _applyFilters(slug, items) {
+  const f = activeFilters[slug] || {};
+  return items.filter(row => {
+    for (const [key, val] of Object.entries(f)) {
+      if (val === "" || val == null) continue;
+      if (key === "__search") {
+        const hay = Object.values(row).map(v => String(v ?? "")).join(" ").toLowerCase();
+        if (!hay.includes(String(val).toLowerCase())) return false;
+      } else if (String(row[key] ?? "") !== String(val)) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+function renderColumns(root, slug, spec, items) {
+  const area = root.querySelector("[data-data-area]");
+  if (!area) return;
+  const rows = _applyFilters(slug, items);
+  if (rows.length === 0) {
+    area.innerHTML = `<p class="empty">No results.</p>`;
+    return;
+  }
+  const cols = (spec.columns && spec.columns.length)
+    ? spec.columns
+    : Object.keys(rows[0]).map(k => ({ label: k, key: k, kind: "text" }));
+
+  const head = cols.map(c => `<th>${c.label}</th>`).join("");
+  const body = rows.slice(0, 200).map(row => {
+    const id = row.id != null ? encodeURIComponent(row.id) : "";
+    const href = id ? `/m/${encodeURIComponent(slug)}/${id}` : "";
+    const cells = cols.map(c => `<td>${formatCell(row[c.key], c.kind)}</td>`).join("");
+    return `<tr${href ? ` data-href="${href}"` : ""}>${cells}</tr>`;
+  }).join("");
+  area.innerHTML = `<table class="data-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+
+  // Whole-row click → drill page.
+  area.querySelectorAll("tr[data-href]").forEach(tr => {
+    tr.addEventListener("click", () => { location.href = tr.dataset.href; });
+  });
+}
+
+function renderFilters(root, slug, spec, items) {
+  const host = root.querySelector("[data-filters]");
+  if (!host) return;
+  const filters = spec.filters || [];
+  if (!filters.length) { host.innerHTML = ""; return; }
+  if (host.dataset.built === slug) return;  // build controls once per module page
+
+  const parts = filters.map(f => {
+    if (f.kind === "search") {
+      return `<input class="filter-control" type="search" placeholder="${f.label}…" ` +
+             `data-filter-key="__search">`;
+    }
+    const values = Array.from(new Set(items.map(i => i[f.key]).filter(v => v != null && v !== "")))
+      .sort().map(v => `<option value="${String(v)}">${String(v)}</option>`).join("");
+    return `<label class="filter-control"><span>${f.label}</span>` +
+           `<select data-filter-key="${f.key}"><option value="">All</option>${values}</select></label>`;
+  });
+  host.innerHTML = parts.join("");
+  host.dataset.built = slug;
+
+  host.querySelectorAll("[data-filter-key]").forEach(ctrl => {
+    const handler = () => {
+      activeFilters[slug] = activeFilters[slug] || {};
+      activeFilters[slug][ctrl.dataset.filterKey] = ctrl.value;
+      renderColumns(root, slug, spec, lastItems[slug] || []);
+    };
+    ctrl.addEventListener("change", handler);
+    ctrl.addEventListener("input", handler);
+  });
 }
 
 function renderTile(slug, value) {
@@ -178,7 +296,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const slug = root.dataset.slug;
     const poll = parseInt(root.dataset.poll, 10) || 30;
     const entity = root.dataset.entity || null;
-    startModulePoller(slug, poll, entity);
+    // Load column/filter metadata first so the very first render is friendly.
+    loadModuleSpecs().finally(() => startModulePoller(slug, poll, entity));
   }
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && activePoller) {

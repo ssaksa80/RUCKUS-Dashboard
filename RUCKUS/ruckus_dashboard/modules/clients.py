@@ -4,7 +4,7 @@ from typing import Any
 from urllib.parse import quote
 
 from . import register
-from ._base import FetcherContext, ModuleSpec, TabSpec
+from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
 from ..clients.smartzone import smartzone_post, smartzone_query_body
 
 POLL_SECONDS = 20
@@ -90,4 +90,20 @@ register(ModuleSpec(
     supports_views=("table", "grid"),
     warmup=True,
     merge=merge,
+    columns=(
+        Column("Host", "hostname"),
+        Column("MAC", "mac"),
+        Column("IP", "ip"),
+        Column("SSID", "ssid"),
+        Column("AP", "ap"),
+        Column("RSSI", "rssi", "number"),
+        Column("RX", "rx_bytes", "bytes"),
+        Column("TX", "tx_bytes", "bytes"),
+        Column("OS", "os"),
+        Column("Auth", "auth_method"),
+    ),
+    filters=(
+        Filter("ssid", "SSID", "select"),
+        Filter("os", "OS", "select"),
+    ),
 ))

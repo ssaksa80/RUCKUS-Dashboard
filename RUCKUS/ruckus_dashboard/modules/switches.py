@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import register
-from ._base import FetcherContext, ModuleSpec, TabSpec
+from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
 from ..clients.switchm import fetch_switches
 
 POLL_SECONDS = 60
@@ -92,4 +92,18 @@ register(ModuleSpec(
     supports_views=("table",),
     warmup=True,
     merge=merge,
+    columns=(
+        Column("Name", "name"),
+        Column("Model", "model"),
+        Column("IP", "ip"),
+        Column("Status", "status", "status"),
+        Column("Stack", "stack"),
+        Column("Firmware", "fw"),
+        Column("Uptime", "uptime", "uptime"),
+        Column("Ports Up", "ports_online", "number"),
+        Column("Ports", "ports_total", "number"),
+    ),
+    filters=(
+        Filter("status", "Status", "select"),
+    ),
 ))

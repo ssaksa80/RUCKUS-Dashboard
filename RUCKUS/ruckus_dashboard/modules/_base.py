@@ -27,6 +27,20 @@ class TabSpec:
 
 
 @dataclass(frozen=True)
+class Column:
+    label: str
+    key: str
+    kind: str = "text"     # text | status | bytes | uptime | number | link
+
+
+@dataclass(frozen=True)
+class Filter:
+    key: str
+    label: str
+    kind: str = "select"   # select | search
+
+
+@dataclass(frozen=True)
 class ModuleSpec:
     slug: str
     title: str
@@ -42,6 +56,8 @@ class ModuleSpec:
     supports_views: tuple[str, ...]
     warmup: bool = True
     merge: Callable[[list[dict]], dict] | None = None
+    columns: tuple[Column, ...] = ()
+    filters: tuple[Filter, ...] = ()
 
     def __post_init__(self) -> None:
         if not SLUG_RE.match(self.slug):
