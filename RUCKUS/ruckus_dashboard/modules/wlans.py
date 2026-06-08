@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 from . import register
 from ._base import FetcherContext, ModuleSpec, TabSpec
-from ..clients.smartzone import smartzone_post
+from ..clients.smartzone import smartzone_post, smartzone_query_body
 
 POLL_SECONDS = 60
 ICON = "\U0001F310"  # globe emoji
@@ -54,12 +54,7 @@ def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _build_query(filters: dict | None) -> dict:
-    f = filters or {}
-    payload = {"page": int(f.get("page", 0)),
-               "limit": int(f.get("limit", 500))}
-    if f.get("zone"):
-        payload["filters"] = [{"type": "ZONE_ID", "value": f["zone"]}]
-    return payload
+    return smartzone_query_body(filters)
 
 
 def _normalize(row: dict) -> dict:
