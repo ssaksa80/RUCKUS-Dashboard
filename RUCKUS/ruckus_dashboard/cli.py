@@ -1,7 +1,11 @@
 """Argparse-driven launcher."""
 from __future__ import annotations
 import argparse
+import json
+import pathlib
+import sys
 import threading
+import time
 import webbrowser
 from typing import Any
 
@@ -28,7 +32,91 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="SSRF allow-list (comma-separated).")
     p.add_argument("--debug", action="store_true", help="Expose API debug output.")
     p.add_argument("--version", action="version", version=f"{APP_NAME} {APP_VERSION}")
+
+    # ─── headless data-dump mode (no Flask server) ──────────────────
+    dump = p.add_argument_group("headless dump")
+    dump.add_argument("--dump", action="store_true",
+                      help="Connect, snapshot every module to JSON, then exit (no server).")
+    dump.add_argument("--dump-file",
+                      help="Output path (default ruckus-dump-<timestamp>.json).")
+    dump.add_argument("--platform", default="smartzone",
+                      choices=["smartzone", "ruckus_one"],
+                      help="RUCKUS platform to connect to (default smartzone).")
+    # SmartZone creds
+    dump.add_argument("--smartzone-host", help="SmartZone host/IP.")
+    dump.add_argument("--smartzone-user", help="SmartZone username.")
+    dump.add_argument("--smartzone-pass", help="SmartZone password.")
+    dump.add_argument("--smartzone-api-version", default="auto",
+                      help="SmartZone public API version (default auto).")
+    dump.add_argument("--smartzone-skip-tls-verify", action="store_true",
+                      help="Skip TLS verification (self-signed lab controllers).")
+    # RUCKUS One creds
+    dump.add_argument("--tenant-id", help="RUCKUS One tenant id.")
+    dump.add_argument("--client-id", help="RUCKUS One client id.")
+    dump.add_argument("--client-secret", help="RUCKUS One client secret.")
+    dump.add_argument("--region", default="na", help="RUCKUS One region (default na).")
     return p.parse_args(argv)
+
+
+def _dump_form(args: argparse.Namespace) -> dict[str, str]:
+    """Translate CLI dump args into the form-dict the authenticators expect."""
+    if args.platform == "ruckus_one":
+        return {
+            "platform": "ruckus_one",
+            "tenant_id": args.tenant_id or "",
+            "client_id": args.client_id or "",
+            "client_secret": args.client_secret or "",
+            "ruckus_one_region": args.region or "na",
+            "ruckus_one_custom_host": "",
+        }
+    return {
+        "platform": "smartzone",
+        "smartzone_host": args.smartzone_host or "",
+        "smartzone_username": args.smartzone_user or "",
+        "smartzone_password": args.smartzone_pass or "",
+        "smartzone_api_version": args.smartzone_api_version or "auto",
+        "smartzone_skip_tls_verify": "1" if args.smartzone_skip_tls_verify else "0",
+    }
+
+
+def _run_dump_mode(args: argparse.Namespace) -> int:
+    """Headless: authenticate, run every fetcher + sample drills, write JSON. No server."""
+    from .config import build_config
+    from .net.allowlist import HostAllowList
+    from .clients import authenticate_connection
+    from .clients.base import RuckusClientError
+    from .dump import run_dump
+
+    config = build_config(str(pathlib.Path.cwd()))
+    # request_json enforces the SSRF allow-list; default empty list = unrestricted,
+    # which is correct for a local operator dump against their own controller.
+    config["RUCKUS_HOST_ALLOWLIST"] = HostAllowList(config.get("RUCKUS_ALLOWED_HOSTS", ""))
+
+    form = _dump_form(args)
+    try:
+        connection = authenticate_connection(form, config)
+    except (ValueError, RuckusClientError) as exc:
+        print(f"Connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    result = run_dump(connection, config)
+
+    out_path = args.dump_file or f"ruckus-dump-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.json"
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2, default=str)
+
+    print(f"{APP_NAME} v{APP_VERSION}")
+    print(f"Wrote dump: {out_path}")
+    print(f"Controller: {result['controller']['platform']} "
+          f"{result['controller']['version']} ({result['controller']['api_base']})")
+    print(f"Capabilities: {result['capabilities']['op_count']} ops discovered")
+    for slug, entry in result["modules"].items():
+        status = entry["status"]
+        detail = f" ({entry['item_count']} items)" if status == "complete" else ""
+        if status == "error":
+            detail = f" — {entry['error']}"
+        print(f"  [{status:>8}] {slug}{detail}")
+    return 0
 
 
 def _browser_host(host: str) -> str:
@@ -45,6 +133,8 @@ def open_browser_once(url: str) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
+    if args.dump:
+        sys.exit(_run_dump_mode(args))
     overrides: dict[str, Any] = {}
     if args.bind: overrides["APP_HOST"] = args.bind
     if args.port is not None: overrides["APP_PORT"] = args.port
