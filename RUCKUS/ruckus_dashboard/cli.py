@@ -45,7 +45,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # SmartZone creds
     dump.add_argument("--smartzone-host", help="SmartZone host/IP.")
     dump.add_argument("--smartzone-user", help="SmartZone username.")
-    dump.add_argument("--smartzone-pass", help="SmartZone password.")
+    dump.add_argument("--smartzone-pass",
+                      help="SmartZone password. Omit to be prompted securely "
+                           "(or set RUCKUS_SMARTZONE_PASSWORD).")
     dump.add_argument("--smartzone-api-version", default="auto",
                       help="SmartZone public API version (default auto).")
     dump.add_argument("--smartzone-skip-tls-verify", action="store_true",
@@ -53,19 +55,65 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # RUCKUS One creds
     dump.add_argument("--tenant-id", help="RUCKUS One tenant id.")
     dump.add_argument("--client-id", help="RUCKUS One client id.")
-    dump.add_argument("--client-secret", help="RUCKUS One client secret.")
+    dump.add_argument("--client-secret",
+                      help="RUCKUS One client secret. Omit to be prompted securely "
+                           "(or set RUCKUS_ONE_CLIENT_SECRET).")
     dump.add_argument("--region", default="na", help="RUCKUS One region (default na).")
     return p.parse_args(argv)
 
 
-def _dump_form(args: argparse.Namespace) -> dict[str, str]:
-    """Translate CLI dump args into the form-dict the authenticators expect."""
+def _resolve_smartzone_password(args: argparse.Namespace, prompt=None) -> str:
+    """Resolve the SmartZone password without requiring it on the command line.
+
+    Precedence: --smartzone-pass flag > RUCKUS_SMARTZONE_PASSWORD env var >
+    secure interactive prompt. Passing secrets as CLI args leaks them into shell
+    history and `ps`, and trips PowerShell quoting — so an empty flag falls back
+    to env then getpass.
+    """
+    import getpass
+    import os
+    if args.smartzone_pass:
+        return args.smartzone_pass
+    env_pw = os.getenv("RUCKUS_SMARTZONE_PASSWORD")
+    if env_pw:
+        return env_pw
+    if prompt is not None:
+        return prompt(f"SmartZone password for {args.smartzone_user or '(user)'}: ")
+    if sys.stdin.isatty():
+        return getpass.getpass(f"SmartZone password for {args.smartzone_user or '(user)'}: ")
+    # Non-interactive with no flag/env: return empty so auth fails with a clear error.
+    return ""
+
+
+def _resolve_ruckus_one_secret(args: argparse.Namespace, prompt=None) -> str:
+    """RUCKUS One client secret: --client-secret > RUCKUS_ONE_CLIENT_SECRET env > prompt."""
+    import getpass
+    import os
+    if args.client_secret:
+        return args.client_secret
+    env_secret = os.getenv("RUCKUS_ONE_CLIENT_SECRET")
+    if env_secret:
+        return env_secret
+    if prompt is not None:
+        return prompt("RUCKUS One client secret: ")
+    if sys.stdin.isatty():
+        return getpass.getpass("RUCKUS One client secret: ")
+    return ""
+
+
+def _dump_form(args: argparse.Namespace, prompt=None) -> dict[str, str]:
+    """Translate CLI dump args into the form-dict the authenticators expect.
+
+    Secrets (SmartZone password / RUCKUS One client secret) are resolved via
+    flag > env > interactive prompt so they never need to be typed on the
+    command line.
+    """
     if args.platform == "ruckus_one":
         return {
             "platform": "ruckus_one",
             "tenant_id": args.tenant_id or "",
             "client_id": args.client_id or "",
-            "client_secret": args.client_secret or "",
+            "client_secret": _resolve_ruckus_one_secret(args, prompt),
             "ruckus_one_region": args.region or "na",
             "ruckus_one_custom_host": "",
         }
@@ -73,7 +121,7 @@ def _dump_form(args: argparse.Namespace) -> dict[str, str]:
         "platform": "smartzone",
         "smartzone_host": args.smartzone_host or "",
         "smartzone_username": args.smartzone_user or "",
-        "smartzone_password": args.smartzone_pass or "",
+        "smartzone_password": _resolve_smartzone_password(args, prompt),
         "smartzone_api_version": args.smartzone_api_version or "auto",
         "smartzone_skip_tls_verify": "1" if args.smartzone_skip_tls_verify else "0",
     }
