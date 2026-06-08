@@ -1,14 +1,50 @@
 """Module list + per-module data endpoints."""
 from __future__ import annotations
+import logging
 from flask import Blueprint, abort, current_app, jsonify, request, session
 
 from ..modules import MODULES, all_modules
 from ..modules._base import FetcherContext
-from ..infra.envelope import build_envelope
+from ..infra.envelope import ControllerError, build_envelope
 from ..infra.capability_gate import CapabilityGate
+from ..clients.base import RuckusClientError
 import ruckus_dashboard.modules._registry  # noqa: F401  side-effect: registers stubs
 
+LOG = logging.getLogger("ruckus_dashboard")
+
 bp = Blueprint("modules", __name__)
+
+
+def _default_merge(results: list[dict]) -> dict:
+    """Concatenate items across controllers when a module declares no merge()."""
+    items: list = []
+    raw = 0
+    for d in results:
+        items.extend(d.get("items", []))
+        raw += int(d.get("raw_count", 0) or 0)
+    return {"items": items, "raw_count": raw}
+
+
+def _upstream_message(exc: RuckusClientError) -> str:
+    """Error text for the UI. Appends the controller's raw response body only
+    when debug output is enabled, so 4xx validation details reach the operator
+    without leaking internals by default."""
+    message = exc.message
+    if current_app.config.get("RUCKUS_SHOW_DEBUG") and isinstance(exc.debug, dict):
+        raw = exc.debug.get("raw")
+        if raw:
+            message = f"{message} :: {raw}"
+    return message
+
+
+def _log_upstream(slug: str, label: str, exc: RuckusClientError) -> None:
+    """Always log the controller's raw error body server-side (truncated), so
+    the failing payload can be diagnosed even when UI debug is off."""
+    raw = ""
+    if isinstance(exc.debug, dict):
+        raw = str(exc.debug.get("raw", ""))[:500]
+    LOG.warning("module '%s' upstream error on %s: HTTP %s %s",
+                slug, label, exc.status_code, raw)
 
 
 @bp.get("/api/modules")
@@ -49,20 +85,35 @@ def module_data(slug: str):
         return jsonify(env)
 
     filters = request.args.to_dict()
-    data_per_conn = []
+    results: list[dict] = []
+    errors: list[ControllerError] = []
     for _, conn in pairs:
         ctx = FetcherContext(connection=conn, config=dict(current_app.config),
                              filters=filters, capability_gate=gate,
                              connection_label=conn.display_name)
-        data_per_conn.append(spec.fetcher(ctx))
+        # A single controller's failure must never 500 the whole module. Collect
+        # it as a ControllerError so the page renders partial data + an error pill.
+        try:
+            results.append(spec.fetcher(ctx))
+        except RuckusClientError as exc:
+            _log_upstream(slug, conn.display_name, exc)
+            errors.append(ControllerError(
+                connection=conn.display_name, endpoint=slug,
+                message=_upstream_message(exc), status=exc.status_code))
+        except Exception as exc:  # noqa: BLE001 — defensive: never 500 the page
+            LOG.exception("module '%s' fetcher crashed on %s", slug, conn.display_name)
+            errors.append(ControllerError(
+                connection=conn.display_name, endpoint=slug,
+                message=str(exc), status=502))
 
-    items = []
-    for d in data_per_conn:
-        items.extend(d.get("items", []))
-    merged = {"items": items}
+    if not results:
+        # Every controller failed → error envelope (HTTP 200; UI shows error pill).
+        return jsonify(build_envelope(data=None, summary={}, errors=errors))
+
+    merge_fn = spec.merge or _default_merge
+    merged = merge_fn(results)
     summary = spec.summary_fn(merged)
-    env = build_envelope(data=merged, summary=summary, errors=[])
-    return jsonify(env)
+    return jsonify(build_envelope(data=merged, summary=summary, errors=errors))
 
 
 @bp.get("/api/modules/<slug>/<entity_id>")
