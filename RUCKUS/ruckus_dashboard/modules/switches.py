@@ -4,7 +4,9 @@ from typing import Any
 
 from . import register
 from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
-from ..clients.switchm import fetch_switches
+from ..clients.switchm import (
+    _api_version_fallbacks, fetch_switches, switch_manager_post,
+)
 
 POLL_SECONDS = 60
 ICON = "\U0001F50C"  # electric-plug emoji
@@ -37,8 +39,90 @@ def summary(data: dict[str, Any]) -> dict[str, Any]:
             "ports_up": ports_up, "ports_total": ports_total}
 
 
+def _drill_ports(ctx: FetcherContext, entity_id: str) -> list[dict[str, Any]]:
+    """Ports belonging to this switch, normalized to minimal fields.
+
+    Walks the SwitchM version fallbacks like ports.fetch does; any upstream
+    failure on every candidate returns an empty list (never raises)."""
+    from ..clients.base import RuckusClientError
+
+    limit = min(int(ctx.config.get("RUCKUS_PAGE_LIMIT", 500)), 1000)
+    payload = {"page": 0, "limit": limit}
+    rows: list[dict[str, Any]] = []
+    for version in _api_version_fallbacks(ctx.connection.api_version):
+        try:
+            data = switch_manager_post(
+                ctx.connection, version, "switch/ports/summary", ctx.config, payload,
+            )
+        except RuckusClientError:
+            continue
+        rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
+        break
+    ports = []
+    for r in rows:
+        if str(r.get("switchId")) != str(entity_id):
+            continue
+        ports.append({
+            "port_id": r.get("portId"),
+            "switch_id": r.get("switchId"),
+            "status": str(r.get("status") or "").lower(),
+            "vlan": r.get("vlan"),
+            "poe_class": r.get("poeClass") or "",
+        })
+    return ports
+
+
+def _drill_health(ctx: FetcherContext, entity_id: str) -> dict[str, Any]:
+    """Best-effort CPU/mem aggregates for this switch. Each sub-call is
+    isolated; a failure leaves that section absent rather than raising."""
+    from ..clients.base import RuckusClientError
+
+    health: dict[str, Any] = {}
+    payload = {"switchIds": [entity_id]}
+    for key, path in (("cpu", "health/cpu/agg"), ("mem", "health/mem/agg")):
+        for version in _api_version_fallbacks(ctx.connection.api_version):
+            try:
+                data = switch_manager_post(
+                    ctx.connection, version, path, ctx.config, payload,
+                )
+            except RuckusClientError:
+                continue
+            except Exception:  # noqa: BLE001 — health is best-effort
+                break
+            if data is not None:
+                health[key] = data
+            break
+    return health
+
+
 def fetch_drill(ctx: FetcherContext, entity_id: str) -> dict[str, Any]:
-    return {"identity": {"id": entity_id}}
+    """Full switch detail: identity row + this switch's ports + health.
+
+    Never raises — every sub-fetch is isolated so a single upstream failure
+    only empties its own section."""
+    identity: dict[str, Any] = {"id": entity_id}
+    raw: Any = None
+    try:
+        response = fetch_switches(ctx.connection, ctx.config) or {}
+        for row in response.get("switches") or []:
+            if str(row.get("id")) == str(entity_id):
+                identity = _normalize(row)
+                raw = row
+                break
+    except Exception:  # noqa: BLE001 — identity falls back to {"id": entity_id}
+        pass
+
+    try:
+        ports = _drill_ports(ctx, entity_id)
+    except Exception:  # noqa: BLE001
+        ports = []
+
+    try:
+        health = _drill_health(ctx, entity_id)
+    except Exception:  # noqa: BLE001
+        health = {}
+
+    return {"identity": identity, "ports": ports, "health": health, "raw": raw}
 
 
 def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -84,6 +168,8 @@ register(ModuleSpec(
     drill_fetcher=fetch_drill,
     drill_tabs=(
         TabSpec(slug="summary", title="Summary"),
+        TabSpec(slug="ports", title="Ports"),
+        TabSpec(slug="health", title="Health"),
         TabSpec(slug="raw", title="Raw"),
     ),
     summary_fn=summary,

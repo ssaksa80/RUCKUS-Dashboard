@@ -56,7 +56,9 @@ def list_modules():
              "requires_capabilities": [list(c) for c in m.requires_capabilities],
              "supports_views": list(m.supports_views),
              "columns": [{"label": c.label, "key": c.key, "kind": c.kind} for c in m.columns],
-             "filters": [{"key": f.key, "label": f.label, "kind": f.kind} for f in m.filters]}
+             "filters": [{"key": f.key, "label": f.label, "kind": f.kind} for f in m.filters],
+             "drill_tabs": [{"slug": t.slug, "title": t.title} for t in m.drill_tabs],
+             "has_drill": m.drill_fetcher is not None}
             for m in all_modules()
         ]
     })
@@ -146,3 +148,39 @@ def module_drill(slug: str, entity_id: str):
         return jsonify({"error": str(exc), "slug": slug, "entity_id": entity_id}), 502
     env = build_envelope(data=data, summary={}, errors=[])
     return jsonify(env)
+
+
+@bp.get("/api/modules/<slug>/<entity_id>/<tab_slug>")
+def module_drill_tab(slug: str, entity_id: str, tab_slug: str):
+    spec = MODULES.get(slug)
+    if spec is None:
+        abort(404, description=f"unknown module: {slug}")
+    tab = next((t for t in spec.drill_tabs if t.slug == tab_slug), None)
+    if tab is None:
+        return jsonify({"error": "unknown tab", "slug": slug, "tab": tab_slug}), 404
+    if not session.get("auth"):
+        return jsonify({"error": "Connection expired. Please reconnect.", "reauth": True}), 401
+
+    conn_ids = tuple(session.get("connection_ids", []))
+    pairs = [(cid, current_app.connection_store.get(cid)) for cid in conn_ids]
+    pairs = [(cid, c) for cid, c in pairs if c is not None]
+    if not pairs:
+        return jsonify({"error": "Connection expired.", "reauth": True}), 401
+
+    gate = CapabilityGate(available=getattr(current_app, "available_ops", set()))
+    filters = request.args.to_dict()
+    _, conn = pairs[0]
+    ctx = FetcherContext(connection=conn, config=dict(current_app.config),
+                         filters=filters, capability_gate=gate,
+                         connection_label=conn.display_name)
+    # A tab-specific fetcher takes precedence; otherwise fall back to the
+    # module's full drill payload and let the client pick the relevant section.
+    fetcher = tab.fetcher or spec.drill_fetcher
+    if fetcher is None:
+        return jsonify({"error": "Module has no drill-in.", "slug": slug}), 404
+    try:
+        data = fetcher(ctx, entity_id)
+    except Exception as exc:
+        return jsonify({"error": str(exc), "slug": slug,
+                        "entity_id": entity_id, "tab": tab_slug}), 502
+    return jsonify(build_envelope(data=data, summary={}, errors=[]))

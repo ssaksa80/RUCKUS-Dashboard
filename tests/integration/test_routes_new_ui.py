@@ -31,6 +31,24 @@ def test_module_list_includes_columns_and_filters():
         assert {"key", "label", "kind"} <= set(aps["filters"][0].keys())
 
 
+def test_module_list_includes_drill_tabs_and_has_drill():
+    app = make_app()
+    with app.test_client() as c:
+        r = c.get("/api/modules")
+        assert r.status_code == 200
+        by_slug = {m["slug"]: m for m in r.json["modules"]}
+        for m in r.json["modules"]:
+            assert "drill_tabs" in m, f"{m['slug']} missing drill_tabs"
+            assert isinstance(m["drill_tabs"], list)
+            assert "has_drill" in m
+            assert isinstance(m["has_drill"], bool)
+        sw = by_slug["switches"]
+        assert sw["has_drill"] is True
+        assert {"slug", "title"} <= set(sw["drill_tabs"][0].keys())
+        sw_slugs = {t["slug"] for t in sw["drill_tabs"]}
+        assert {"summary", "ports", "health", "raw"} <= sw_slugs
+
+
 def test_module_data_endpoint_unauthenticated_401():
     app = make_app()
     with app.test_client() as c:
@@ -59,6 +77,55 @@ def test_drill_route_unknown_module_404():
     with app.test_client() as c:
         r = c.get("/api/modules/does-not-exist/abc")
         assert r.status_code == 404
+
+
+def test_tab_route_unauthenticated_401():
+    app = make_app()
+    with app.test_client() as c:
+        r = c.get("/api/modules/switches/s1/ports")
+        assert r.status_code == 401
+
+
+def test_tab_route_unknown_module_404():
+    app = make_app()
+    with app.test_client() as c:
+        r = c.get("/api/modules/does-not-exist/s1/ports")
+        assert r.status_code == 404
+
+
+def test_tab_route_unknown_tab_404():
+    import dataclasses
+    app, cid, modmod = _authed_app_with_conn()
+    with app.test_client() as c:
+        with c.session_transaction() as s:
+            s["auth"] = True
+            s["connection_ids"] = [cid]
+        r = c.get("/api/modules/switches/s1/not-a-tab")
+        assert r.status_code == 404
+
+
+def test_tab_route_returns_envelope():
+    import dataclasses
+    app, cid, modmod = _authed_app_with_conn()
+
+    def fake_drill(ctx, entity_id):
+        return {"identity": {"id": entity_id}, "ports": [{"port_id": "1/1/1"}],
+                "health": {}, "raw": None}
+
+    original = modmod.MODULES["switches"]
+    modmod.MODULES["switches"] = dataclasses.replace(original, drill_fetcher=fake_drill)
+    try:
+        with app.test_client() as c:
+            with c.session_transaction() as s:
+                s["auth"] = True
+                s["connection_ids"] = [cid]
+            r = c.get("/api/modules/switches/s1/ports")
+            assert r.status_code == 200
+            body = r.get_json()
+            assert "data" in body
+            assert body["data"]["ports"][0]["port_id"] == "1/1/1"
+    finally:
+        modmod.MODULES["switches"] = original
 
 
 def _authed_app_with_conn():

@@ -96,6 +96,9 @@ function renderModule(slug, payload) {
   const root = document.querySelector(`.module[data-slug="${slug}"]`);
   if (!root) return;
 
+  const entity = root.dataset.entity;
+  if (entity) { renderDrill(root, slug, entity, payload); return; }
+
   const fresh = root.querySelector("[data-freshness]");
   if (fresh) fresh.textContent = payload.generated_at || "—";
   const stat = root.querySelector("[data-status]");
@@ -206,6 +209,143 @@ function renderFilters(root, slug, spec, items) {
     ctrl.addEventListener("change", handler);
     ctrl.addEventListener("input", handler);
   });
+}
+
+function _escape(v) {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Key/value list for object-shaped sections (identity, health, raw object).
+function renderKeyVals(container, obj) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj) || !Object.keys(obj).length) {
+    container.innerHTML = `<p class="empty">No data.</p>`;
+    return;
+  }
+  const rows = Object.entries(obj).map(([k, v]) => {
+    let val = v;
+    if (v && typeof v === "object") val = JSON.stringify(v);
+    return `<div class="kv-row"><span class="kv-key">${_escape(k)}</span>` +
+           `<span class="kv-val">${_escape(val)}</span></div>`;
+  }).join("");
+  container.innerHTML = `<div class="kv-list">${rows}</div>`;
+}
+
+// Simple table for array-of-objects sections (ports, etc.).
+function renderGenericTable(container, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    container.innerHTML = `<p class="empty">No data.</p>`;
+    return;
+  }
+  const cols = Array.from(rows.reduce((set, r) => {
+    Object.keys(r || {}).forEach(k => set.add(k));
+    return set;
+  }, new Set()));
+  const head = cols.map(c => `<th>${_escape(c)}</th>`).join("");
+  const body = rows.slice(0, 500).map(r =>
+    `<tr>${cols.map(c => {
+      let v = r[c];
+      if (v && typeof v === "object") v = JSON.stringify(v);
+      return `<td>${_escape(v ?? "—")}</td>`;
+    }).join("")}</tr>`).join("");
+  container.innerHTML =
+    `<table class="data-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+// Render one tab's section payload into the drill body.
+function _renderDrillSection(body, slug, tabSlug, payload) {
+  const data = (payload && payload.data) || {};
+  if (tabSlug === "raw") {
+    body.innerHTML = `<pre class="drill-raw">${_escape(JSON.stringify(data, null, 2))}</pre>`;
+    return;
+  }
+  // Pick the section: prefer a key matching the tab slug, else items, else whole data.
+  let section = data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    if (Array.isArray(data[tabSlug]) || (data[tabSlug] && typeof data[tabSlug] === "object")) {
+      section = data[tabSlug];
+    } else if (Array.isArray(data.items)) {
+      section = data.items;
+    } else if (tabSlug === "summary" && data.identity) {
+      section = data.identity;
+    }
+  }
+  if (Array.isArray(section)) {
+    renderGenericTable(body, section);
+  } else if (section && typeof section === "object") {
+    renderKeyVals(body, section);
+  } else {
+    body.innerHTML = `<p class="empty">No data.</p>`;
+  }
+}
+
+function renderDrill(root, slug, entity, payload) {
+  const fresh = root.querySelector("[data-freshness]");
+  if (fresh) fresh.textContent = (payload && payload.generated_at) || "—";
+  const stat = root.querySelector("[data-status]");
+  if (stat) stat.textContent = (payload && payload.status) || "—";
+
+  // In drill mode, hide list-oriented chrome.
+  const kpi = root.querySelector("[data-kpi-strip]");
+  if (kpi) kpi.hidden = true;
+  const filters = root.querySelector("[data-filters]");
+  if (filters) filters.hidden = true;
+  const views = root.querySelector("[data-views]");
+  if (views) views.hidden = true;
+
+  const area = root.querySelector("[data-data-area]");
+  if (!area) return;
+
+  const data = (payload && payload.data) || {};
+  const identity = (data && data.identity && typeof data.identity === "object")
+    ? data.identity : { id: entity };
+  const title = identity.name || identity.id || entity;
+
+  const spec = moduleSpecs[slug] || {};
+  const tabs = (spec.drill_tabs && spec.drill_tabs.length)
+    ? spec.drill_tabs : [{ slug: "summary", title: "Summary" }, { slug: "raw", title: "Raw" }];
+
+  // Build hero + tab bar once.
+  if (root.dataset.drillBuilt !== entity) {
+    const heroRows = Object.entries(identity).map(([k, v]) => {
+      let val = v;
+      if (v && typeof v === "object") val = JSON.stringify(v);
+      return `<div class="kv-row"><span class="kv-key">${_escape(k)}</span>` +
+             `<span class="kv-val">${_escape(val)}</span></div>`;
+    }).join("");
+    const tabBar = tabs.map((t, i) =>
+      `<button class="drill-tab${i === 0 ? " active" : ""}" ` +
+      `data-drill-tab="${_escape(t.slug)}">${_escape(t.title)}</button>`).join("");
+    area.innerHTML =
+      `<div class="drill-hero"><h2>${_escape(title)}</h2>` +
+      `<div class="kv-list">${heroRows}</div></div>` +
+      `<div class="drill-tabbar">${tabBar}</div>` +
+      `<div class="drill-body" data-drill-body><p class="loading">Loading…</p></div>`;
+    root.dataset.drillBuilt = entity;
+
+    const body = area.querySelector("[data-drill-body]");
+    const loadTab = (tabSlug) => {
+      const url = `/api/modules/${encodeURIComponent(slug)}/` +
+                  `${encodeURIComponent(entity)}/${encodeURIComponent(tabSlug)}`;
+      fetch(url, { credentials: "same-origin" })
+        .then(r => r.ok ? r.json() : null)
+        .then(p => {
+          if (!p) { body.innerHTML = `<p class="empty">No data.</p>`; return; }
+          _renderDrillSection(body, slug, tabSlug, p);
+        })
+        .catch(() => { body.innerHTML = `<p class="empty">No data.</p>`; });
+    };
+    area.querySelectorAll("[data-drill-tab]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        area.querySelectorAll("[data-drill-tab]").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        loadTab(btn.dataset.drillTab);
+      });
+    });
+    // Default active tab: first. Render its section from the current payload
+    // when possible (the drill_fetcher payload already contains every section).
+    _renderDrillSection(body, slug, tabs[0].slug, payload);
+  }
 }
 
 function renderTile(slug, value) {
