@@ -25,6 +25,17 @@ def test_dashboard_js_contains_warmup_integration():
             assert symbol in body, f"missing symbol: {symbol}"
 
 
+def test_dashboard_js_contains_drill_rendering():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        r = c.get("/static/dashboard.js")
+        body = r.data.decode()
+        for symbol in ["renderDrill", "data-drill-body", "renderKeyVals",
+                       "renderGenericTable"]:
+            assert symbol in body, f"missing symbol: {symbol}"
+
+
 def test_dashboard_js_contains_columns_filters_rowclick():
     from ruckus_dashboard.app import create_app
     app = create_app({"SECRET_KEY": "t"})
