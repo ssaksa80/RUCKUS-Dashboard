@@ -41,6 +41,17 @@ function humanUptime(seconds) {
   return `${m}m`;
 }
 
+function formatKpiValue(v) {
+  // KPI values are scalars; a dict (e.g. by_method) renders as "GET 379 · POST 362".
+  if (v === null || v === undefined) return "—";
+  if (Array.isArray(v)) return String(v.length);
+  if (typeof v === "object") {
+    const parts = Object.entries(v).map(([k, n]) => `${k} ${n}`);
+    return parts.length ? parts.join(" · ") : "—";
+  }
+  return String(v);
+}
+
 function formatCell(value, kind) {
   if (value === null || value === undefined || value === "") return "—";
   if (kind === "status") {
@@ -107,8 +118,11 @@ function renderModule(slug, payload) {
   const strip = root.querySelector("[data-kpi-strip]");
   if (strip && payload.summary) {
     strip.innerHTML = Object.entries(payload.summary)
-      .map(([k, v]) => `<div class="kpi-card neutral"><span class="kpi-label">${k}</span>` +
-                       `<span class="kpi-value" aria-live="polite">${v}</span></div>`)
+      .map(([k, v]) => {
+        const label = k.replace(/_/g, " ");
+        return `<div class="kpi-card neutral"><span class="kpi-label">${label}</span>` +
+               `<span class="kpi-value" aria-live="polite">${formatKpiValue(v)}</span></div>`;
+      })
       .join("");
   }
 
@@ -378,7 +392,8 @@ function startWarmupStream() {
     if (!val) return;
     if (payload.status === "done") {
       const s = payload.summary || {};
-      val.textContent = s.total ?? s.count ?? Object.values(s)[0] ?? "0";
+      const pick = s.total ?? s.count ?? s.switches ?? Object.values(s).find(x => typeof x === "number");
+      val.textContent = pick === undefined ? "0" : formatKpiValue(pick);
     } else if (payload.status === "failed" || payload.status === "timed_out") {
       val.textContent = "!";
       val.title = payload.error_message || "";
