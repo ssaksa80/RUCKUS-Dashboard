@@ -4,7 +4,7 @@ from typing import Any
 
 from . import register
 from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
-from ..clients.smartzone import smartzone_post, smartzone_query_body
+from ..clients.smartzone import smartzone_query_paged
 
 POLL_SECONDS = 30
 ICON = "\U0001F4F6"  # signal-bars emoji
@@ -15,13 +15,11 @@ FLAGGED_VALUES = {"flagged", "warning", "degraded"}
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    payload = _build_query(ctx.filters)
-    # smartzone_post signature: (connection, path, config, body, debug, *, optional=False)
-    response = smartzone_post(ctx.connection, "query/ap", ctx.config, payload, [])
-    response = response or {}
-    rows = response.get("list") or []
+    # Paginate: SmartZone caps a single page at 500, fabrics often exceed it.
+    rows = smartzone_query_paged(ctx.connection, "query/ap", ctx.config, [],
+                                 body=_filter_body(ctx.filters))
     items = [_normalize(r) for r in rows]
-    return {"items": items, "raw_count": response.get("totalCount", len(rows))}
+    return {"items": items, "raw_count": len(rows)}
 
 
 def summary(data: dict[str, Any]) -> dict[str, Any]:
@@ -54,8 +52,12 @@ def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
     return {"items": items, "raw_count": raw}
 
 
-def _build_query(filters: dict | None) -> dict:
-    return smartzone_query_body(filters)
+def _filter_body(filters: dict | None) -> dict:
+    """Filter portion of a /query/ap body (page/limit are added by the pager)."""
+    f = filters or {}
+    if f.get("zone"):
+        return {"filters": [{"type": "ZONE_ID", "value": f["zone"]}]}
+    return {}
 
 
 def _normalize(row: dict) -> dict:
