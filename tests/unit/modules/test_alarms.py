@@ -25,7 +25,7 @@ def test_alarms_fetch_combines_summary_and_list():
     base = "https://sz.example:8443/wsg/api/public"
     responses.add(responses.POST, f"{base}/v11_0/alert/alarmSummary",
                   json=SUMMARY_FIX, status=200)
-    responses.add(responses.POST, f"{base}/v11_0/query/alarm",
+    responses.add(responses.POST, f"{base}/v11_0/alert/alarm/list",
                   json=LIST_FIX, status=200)
     out = alarms_mod.fetch(_ctx())
     assert len(out["items"]) == 2

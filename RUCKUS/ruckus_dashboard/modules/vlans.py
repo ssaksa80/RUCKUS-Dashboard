@@ -4,26 +4,15 @@ from typing import Any
 
 from . import register
 from ._base import Column, FetcherContext, ModuleSpec, TabSpec
-from ..clients.base import RuckusClientError
-from ..clients.switchm import _api_version_fallbacks, switch_manager_post
+from ..clients.switchm import switch_manager_query
 
 POLL_SECONDS = 60
 ICON = "\U0001F3F7"  # 🏷️
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    limit = min(int(ctx.config.get("RUCKUS_PAGE_LIMIT", 500)), 1000)
-    payload = {"page": 0, "limit": limit}
-    rows: list[dict[str, Any]] = []
-    for version in _api_version_fallbacks(ctx.connection.api_version):
-        try:
-            data = switch_manager_post(
-                ctx.connection, version, "vlan/list", ctx.config, payload,
-            )
-        except RuckusClientError:
-            continue
-        rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
-        break
+    data = switch_manager_query(ctx.connection, "vlan/list", ctx.config)
+    rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
     items = [_normalize(r) for r in rows]
     return {"items": items, "raw_count": len(items)}
 
