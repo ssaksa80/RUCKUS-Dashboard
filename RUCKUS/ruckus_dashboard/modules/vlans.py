@@ -4,22 +4,21 @@ from typing import Any
 
 from . import register
 from ._base import Column, FetcherContext, ModuleSpec, TabSpec
-from ..clients.switchm import switch_manager_query, switch_query_payload
+from ..clients.switchm import switch_manager_query
 
 POLL_SECONDS = 60
 ICON = "\U0001F3F7"  # 🏷️
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    # SmartZone 7.1.1 serves VLANs at /vlans/query. Two gotchas vs the switch
-    # query: it is 0-indexed (page=1 starts at firstIndex 500 → empty), and the
-    # default sortColumn "serialNumber" is invalid for VLANs (rawDataTotalCount
-    # comes back 0). So: page=0 and no sortColumn.
+    # SmartZone 7.1.1 serves VLANs at /vlans/query. The full switch query
+    # envelope (sortColumn=serialNumber, expandDomains, fullTextSearch) makes it
+    # return rawDataTotalCount=0 even though 761 VLANs exist — so use a minimal
+    # {page, limit} body. page is 1-indexed here (probe confirmed page=1 → 200).
     limit = min(int(ctx.config.get("RUCKUS_PAGE_LIMIT", 500)), 1000)
     data = switch_manager_query(
         ctx.connection, "vlans/query", ctx.config,
-        payload=switch_query_payload(0, limit, sort_column=""),
-        fallback_paths=("vlans",),
+        payload={"page": 1, "limit": limit},
     )
     rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
     items = [_normalize(r) for r in rows]
