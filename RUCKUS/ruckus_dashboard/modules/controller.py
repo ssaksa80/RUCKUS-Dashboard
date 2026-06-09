@@ -1,86 +1,67 @@
-"""Controller — SmartZone cluster + devices + license summary (singleton view)."""
+"""Controller — SmartZone cluster + devices summary (singleton view).
+
+7.1.1 ``cluster/state`` carries ``clusterName/clusterState`` plus a
+``nodeStateList``; ``system/devicesSummary`` carries connected/total AP and
+switch counts and capacity. KPIs come from those; the node list is the table."""
 from __future__ import annotations
 from typing import Any
 
 from . import register
-from ._base import FetcherContext, ModuleSpec
+from ._base import Column, FetcherContext, ModuleSpec
 from ..clients.smartzone import smartzone_get
 
 POLL_SECONDS = 120
 ICON = "\U0001F39B"  # control knobs emoji
 
+_NODE_ONLINE = {"in_service", "online", "active", "up", "management_in_service",
+                "service_ready"}
+
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    cluster: dict | None = None
-    devices: dict | None = None
-    licenses: Any = None
-
     try:
         cluster = smartzone_get(ctx.connection, "cluster/state", ctx.config, None, [])
-    except Exception:
+    except Exception:  # noqa: BLE001
         cluster = None
     try:
         devices = smartzone_get(
             ctx.connection, "system/devicesSummary", ctx.config, None, []
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         devices = None
-    try:
-        licenses = smartzone_get(
-            ctx.connection, "licensesSummary", ctx.config, None, []
-        )
-    except Exception:
-        licenses = None
 
-    return {
-        "items": [],
-        "cluster": cluster,
-        "devices": devices,
-        "licenses": licenses,
-    }
+    nodes = (cluster or {}).get("nodeStateList") or []
+    items = [
+        {
+            "id": n.get("nodeId") or n.get("nodeName"),
+            "node": n.get("nodeName"),
+            "state": n.get("nodeState"),
+        }
+        for n in nodes if isinstance(n, dict)
+    ]
+    return {"items": items, "cluster": cluster, "devices": devices}
 
 
 def summary(data: dict[str, Any]) -> dict[str, Any]:
     cluster = data.get("cluster") or {}
-    licenses = data.get("licenses") or {}
+    devices = data.get("devices") or {}
+    nodes = cluster.get("nodeStateList") or []
+    online = sum(1 for n in nodes if isinstance(n, dict)
+                 and str(n.get("nodeState") or "").lower() in _NODE_ONLINE)
 
-    rows: list[dict] = []
-    if isinstance(licenses, dict):
-        maybe = licenses.get("summary")
-        if isinstance(maybe, list):
-            rows = [r for r in maybe if isinstance(r, dict)]
-    elif isinstance(licenses, list):
-        rows = [r for r in licenses if isinstance(r, dict)]
-
-    license_used = 0
-    license_total = 0
-    for row in rows:
+    def _int(src: dict, key: str) -> int:
         try:
-            license_used += int(row.get("consumedCount") or 0)
+            return int(src.get(key) or 0)
         except (TypeError, ValueError):
-            pass
-        try:
-            license_total += int(row.get("totalCount") or 0)
-        except (TypeError, ValueError):
-            pass
-
-    nodes_online = 0
-    nodes_total = 0
-    if isinstance(cluster, dict):
-        try:
-            nodes_online = int(cluster.get("currentNodes") or 0)
-        except (TypeError, ValueError):
-            nodes_online = 0
-        try:
-            nodes_total = int(cluster.get("totalNodes") or 0)
-        except (TypeError, ValueError):
-            nodes_total = 0
+            return 0
 
     return {
-        "nodes_online": nodes_online,
-        "nodes_total": nodes_total,
-        "license_used": license_used,
-        "license_total": license_total,
+        "cluster_state": cluster.get("clusterState") or "—",
+        "nodes_online": online,
+        "nodes_total": len(nodes),
+        "aps_connected": _int(devices, "aps"),
+        "total_aps": _int(devices, "totalAps"),
+        "switches_connected": _int(devices, "switches"),
+        "total_switches": _int(devices, "totalSwitches"),
     }
 
 
@@ -96,4 +77,8 @@ register(ModuleSpec(
     supports_views=("table",),
     warmup=True,
     merge=None,
+    columns=(
+        Column("Node", "node"),
+        Column("State", "state", "status"),
+    ),
 ))

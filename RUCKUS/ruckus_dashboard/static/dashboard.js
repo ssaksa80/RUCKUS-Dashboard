@@ -501,8 +501,27 @@ document.addEventListener("DOMContentLoaded", () => {
       fetchModule(activePoller.slug).catch(() => {});
     }
   });
+  // DSO wall mode. Entering hides the topbar (and its toggle), so provide a
+  // floating exit button + Escape key so the user is never trapped.
   const dso = document.getElementById("dso-toggle");
-  if (dso) dso.addEventListener("click", () => document.body.classList.toggle("dso-mode"));
+  const setWall = (on) => {
+    document.body.classList.toggle("dso-mode", on);
+    let exit = document.getElementById("dso-exit");
+    if (on && !exit) {
+      exit = document.createElement("button");
+      exit.id = "dso-exit";
+      exit.className = "dso-exit";
+      exit.textContent = "⤢ Exit wall";
+      exit.title = "Exit DSO wall mode (Esc)";
+      exit.addEventListener("click", () => setWall(false));
+      document.body.appendChild(exit);
+    }
+    if (exit) exit.hidden = !on;
+  };
+  if (dso) dso.addEventListener("click", () => setWall(!document.body.classList.contains("dso-mode")));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.body.classList.contains("dso-mode")) setWall(false);
+  });
 
   // Persistent DSO health bar (shell-level, present on every page).
   renderHealthBar();

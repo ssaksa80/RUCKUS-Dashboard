@@ -4,25 +4,43 @@ from typing import Any
 
 from . import register
 from ._base import Column, FetcherContext, ModuleSpec, TabSpec
-from ..clients.switchm import switch_manager_query
+from ..clients.switchm import switch_manager_query, fetch_switches
 
 POLL_SECONDS = 30
 ICON = "\U0001F4CA"  # 📊
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
+    # traffic/top/usage rows are {key: <switch MAC>, value: <total bytes>} with
+    # no switch name — resolve names from the switch inventory.
+    name_by_mac = _switch_name_map(ctx)
     data = switch_manager_query(ctx.connection, "traffic/top/usage", ctx.config)
     rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
-    items = [_normalize(r) for r in rows]
-    # raw_rows: first upstream rows (pre-normalize) so the dump exposes real keys.
+    items = [_normalize(r, name_by_mac) for r in rows]
     return {"items": items, "raw_count": len(items), "raw_rows": rows[:2]}
+
+
+def _switch_name_map(ctx: FetcherContext) -> dict[str, str]:
+    out: dict[str, str] = {}
+    try:
+        resp = fetch_switches(ctx.connection, ctx.config) or {}
+    except Exception:  # noqa: BLE001
+        return out
+    for sw in resp.get("switches") or []:
+        if not isinstance(sw, dict):
+            continue
+        name = sw.get("switchName") or sw.get("name")
+        for key in (sw.get("id"), sw.get("macAddress"), sw.get("mac")):
+            if key and name:
+                out[str(key).upper()] = name
+    return out
 
 
 def summary(data: dict[str, Any]) -> dict[str, Any]:
     items = data.get("items", [])
     total_switches = len(items)
     total_bytes = sum(int(i.get("total_bytes") or 0) for i in items)
-    top_switch = items[0]["switch_name"] if items else ""
+    top_switch = items[0]["switch_name"] if items else "—"
     return {"total_switches": total_switches,
             "total_bytes": total_bytes,
             "top_switch": top_switch}
@@ -40,15 +58,16 @@ def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
     return {"items": items, "raw_count": raw}
 
 
-def _normalize(row: dict) -> dict:
-    switch_id = row.get("switchId")
+def _normalize(row: dict, name_by_mac: dict[str, str] | None = None) -> dict:
+    name_by_mac = name_by_mac or {}
+    key = row.get("key") or row.get("id") or row.get("switchId")
+    total = int(row.get("value") or row.get("totalUsage") or 0)
+    name = name_by_mac.get(str(key).upper()) if key else None
     return {
-        "id": switch_id,
-        "switch_id": switch_id,
-        "switch_name": row.get("switchName"),
-        "total_bytes": int(row.get("totalUsage") or 0),
-        "rx_bytes": int(row.get("rxBytes") or 0),
-        "tx_bytes": int(row.get("txBytes") or 0),
+        "id": key,
+        "switch_id": key,
+        "switch_name": name or key or "—",
+        "total_bytes": total,
     }
 
 
@@ -69,8 +88,6 @@ register(ModuleSpec(
     merge=merge,
     columns=(
         Column("Switch", "switch_name"),
-        Column("Total", "total_bytes", "bytes"),
-        Column("RX", "rx_bytes", "bytes"),
-        Column("TX", "tx_bytes", "bytes"),
+        Column("Total Traffic", "total_bytes", "bytes"),
     ),
 ))
