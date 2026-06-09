@@ -86,7 +86,7 @@ def validate_assets(
         status = _asset_security_status(asset, kev_matches, nvd_matches)
         asset["security"] = _security_result(
             status,
-            _security_summary(status, kev_matches, nvd_matches),
+            _security_summary(status, kev_matches, nvd_matches, asset),
             kev_matches,
             nvd_matches,
         )
@@ -236,16 +236,43 @@ def _security_summary(
     status: str,
     kev_matches: list[dict[str, Any]],
     nvd_matches: list[dict[str, Any]],
+    asset: dict[str, Any] | None = None,
 ) -> str:
+    """Actionable, firmware-aware one-liner: verdict + recommended next step."""
+    fw = str((asset or {}).get("firmware_version") or "").strip() or "unknown firmware"
+
     if status == "critical":
-        return "Known exploited vulnerability match found in public CISA KEV data."
+        n = len(kev_matches)
+        ids = ", ".join(m.get("id") for m in kev_matches if m.get("id"))
+        due = ", ".join(m.get("due_date") for m in kev_matches if m.get("due_date"))
+        return (
+            f"{n} actively-exploited CVE"
+            f"{'s' if n != 1 else ''} match firmware {fw} in CISA KEV"
+            f"{f' ({ids})' if ids else ''}. "
+            f"Patch or mitigate now per the CISA due date"
+            f"{f' ({due})' if due else ''}; isolate the device if no fix is available."
+        )
     if status == "watch" and nvd_matches:
-        return "Public CVE references found; review vendor advisory and patch plan."
+        n = len(nvd_matches)
+        return (
+            f"{n} public CVE{'s' if n != 1 else ''} reference firmware {fw} in NVD. "
+            f"Review the linked advisories and schedule the vendor-recommended patch."
+        )
     if status == "watch":
-        return "Firmware patch review recommended based on catalog posture."
+        return (
+            f"Firmware {fw} looks out of date or unsupported. "
+            f"Plan an upgrade to the latest supported release."
+        )
     if status == "ok":
-        return "No public KEV/CVE match found at validation time."
-    return "Validation could not be completed for this asset."
+        return (
+            f"Firmware {fw} is clean against CISA KEV and NVD — no action needed. "
+            f"Re-scan after any firmware change and keep firmware current "
+            f"(a clean result is not a zero-risk guarantee)."
+        )
+    return (
+        "Not validated — firmware not reported or security lookups unavailable. "
+        "Confirm the firmware inventory and enable lookups to assess this device."
+    )
 
 
 def _security_result(

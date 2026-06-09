@@ -73,3 +73,21 @@ def test_enabled_ok_when_no_matches():
     result = validate_assets(assets, cfg, _cache())
     assert assets[0]["security"]["status"] == "ok"
     assert result["ok_count"] == 1
+
+
+def test_summary_ok_is_actionable_and_firmware_aware():
+    from ruckus_dashboard.security.validator import _security_summary
+    s = _security_summary("ok", [], [], {"firmware_version": "7.1.1.0.5217"})
+    assert "7.1.1.0.5217" in s
+    assert "CISA KEV" in s and "NVD" in s
+    assert "no action needed" in s.lower()
+
+
+def test_summary_critical_names_count_and_action():
+    from ruckus_dashboard.security.validator import _security_summary
+    s = _security_summary("critical",
+                          [{"id": "CVE-2024-1", "due_date": "2024-02-01"}], [],
+                          {"firmware_version": "7.0"})
+    assert "CVE-2024-1" in s
+    assert "CISA KEV" in s
+    assert "mitigate" in s.lower() or "patch" in s.lower()
