@@ -1,11 +1,9 @@
-import json, pathlib
 import responses
 from ruckus_dashboard.auth.session_store import ConnectionConfig
 from ruckus_dashboard.modules._base import FetcherContext
 from ruckus_dashboard.modules import traffic as traffic_mod
 from ruckus_dashboard.infra.capability_gate import CapabilityGate
 
-FIXTURE = json.loads(pathlib.Path("tests/fixtures/switchm/traffic_top_usage.json").read_text())
 CFG = {"RUCKUS_TIMEOUT_SECONDS": 5, "RUCKUS_DEBUG_BYTES": 1000,
        "RUCKUS_PAGE_LIMIT": 500, "RUCKUS_HOST_ALLOWLIST": None}
 
@@ -19,14 +17,23 @@ def _ctx():
 
 
 @responses.activate
-def test_traffic_fetch_returns_normalised_rows():
+def test_traffic_resolves_switch_name_from_mac():
+    # Rows are {key: <MAC>, value: <bytes>}; name comes from the switch list.
     sw_base = "https://sz.example:8443/switchm/api"
+    responses.add(responses.POST, f"{sw_base}/v11_0/switch",
+                  json={"list": [{"id": "B0:7C:51:19:52:6C", "switchName": "SW-1"}],
+                        "totalCount": 1, "hasMore": False},
+                  status=200, match_querystring=False)
     responses.add(responses.POST, f"{sw_base}/v11_0/traffic/top/usage",
-                  json=FIXTURE, status=200, match_querystring=False)
+                  json={"list": [{"key": "B0:7C:51:19:52:6C", "value": 5368709120},
+                                 {"key": "AA:BB:CC:DD:EE:FF", "value": 1073741824}]},
+                  status=200, match_querystring=False)
     out = traffic_mod.fetch(_ctx())
-    assert len(out["items"]) == 3
+    assert len(out["items"]) == 2
     assert out["items"][0]["switch_name"] == "SW-1"
     assert out["items"][0]["total_bytes"] == 5368709120
+    # unknown MAC falls back to the MAC itself
+    assert out["items"][1]["switch_name"] == "AA:BB:CC:DD:EE:FF"
 
 
 def test_traffic_summary_top_switch():

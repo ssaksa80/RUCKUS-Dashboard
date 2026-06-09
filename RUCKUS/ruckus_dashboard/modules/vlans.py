@@ -11,28 +11,65 @@ ICON = "\U0001F3F7"  # 🏷️
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    # SmartZone 7.1.1 serves VLANs at /vlans/query. The full switch query
-    # envelope (sortColumn=serialNumber, expandDomains, fullTextSearch) makes it
-    # return rawDataTotalCount=0 even though 761 VLANs exist — so use a minimal
-    # {page, limit} body. page is 1-indexed here (probe confirmed page=1 → 200).
+    # SmartZone 7.1.1 serves VLANs at /vlans/query with a minimal {page, limit}
+    # body (the full switch envelope filters everything out). Each row is a VLAN
+    # *on one switch* (vlanId + switchId + ports[]), so paginate all pages and
+    # group by vlanId to get member-switch and port tallies.
     limit = min(int(ctx.config.get("RUCKUS_PAGE_LIMIT", 500)), 1000)
-    data = switch_manager_query(
-        ctx.connection, "vlans/query", ctx.config,
-        payload={"page": 1, "limit": limit},
-    )
-    rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
-    items = [_normalize(r) for r in rows]
-    # raw_rows: first upstream rows (pre-normalize) so the dump exposes real keys.
+    rows: list[dict] = []
+    page = 1
+    while page <= 20:
+        data = switch_manager_query(
+            ctx.connection, "vlans/query", ctx.config,
+            payload={"page": page, "limit": limit},
+        )
+        batch = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
+        rows.extend(batch)
+        if len(batch) < limit:
+            break
+        page += 1
+
+    items = _group_by_vlan(rows)
     return {"items": items, "raw_count": len(items), "raw_rows": rows[:2]}
+
+
+def _group_by_vlan(rows: list[dict]) -> list[dict]:
+    groups: dict[Any, dict] = {}
+    for r in rows:
+        vid = r.get("vlanId")
+        g = groups.get(vid)
+        if g is None:
+            g = {"vlan_id": vid, "name": r.get("name") or "",
+                 "switches": set(), "port_count": 0}
+            groups[vid] = g
+        if not g["name"] and r.get("name"):
+            g["name"] = r.get("name")
+        sw = r.get("switchId")
+        if sw:
+            g["switches"].add(sw)
+        ports = r.get("ports")
+        if isinstance(ports, list):
+            g["port_count"] += len(ports)
+    items = []
+    for vid, g in groups.items():
+        members = sorted(g["switches"])
+        items.append({
+            "id": str(vid) if vid is not None else "",
+            "vlan_id": int(vid or 0),
+            "name": g["name"],
+            "member_switches": members,
+            "member_switch_count": len(members),
+            "port_count": g["port_count"],
+        })
+    items.sort(key=lambda i: i["vlan_id"])
+    return items
 
 
 def summary(data: dict[str, Any]) -> dict[str, Any]:
     items = data.get("items", [])
-    total_tagged = sum(int(i.get("tagged_ports") or 0) for i in items)
-    total_untagged = sum(int(i.get("untagged_ports") or 0) for i in items)
     return {"total_vlans": len(items),
-            "total_tagged_ports": total_tagged,
-            "total_untagged_ports": total_untagged}
+            "total_switch_links": sum(int(i.get("member_switch_count") or 0) for i in items),
+            "total_ports": sum(int(i.get("port_count") or 0) for i in items)}
 
 
 def fetch_drill(ctx: FetcherContext, entity_id: str) -> dict[str, Any]:
@@ -45,22 +82,6 @@ def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
         items.extend(r.get("items", []))
         raw += int(r.get("raw_count", 0))
     return {"items": items, "raw_count": raw}
-
-
-def _normalize(row: dict) -> dict:
-    vlan_id = row.get("vlanId")
-    members = row.get("memberSwitches") or []
-    if not isinstance(members, list):
-        members = []
-    return {
-        "id": str(vlan_id) if vlan_id is not None else "",
-        "vlan_id": int(vlan_id or 0),
-        "name": row.get("name") or "",
-        "member_switches": members,
-        "member_switch_count": len(members),
-        "tagged_ports": int(row.get("taggedPortCount") or 0),
-        "untagged_ports": int(row.get("untaggedPortCount") or 0),
-    }
 
 
 register(ModuleSpec(
@@ -78,4 +99,10 @@ register(ModuleSpec(
     supports_views=("table",),
     warmup=True,
     merge=merge,
+    columns=(
+        Column("VLAN", "vlan_id", "number"),
+        Column("Name", "name"),
+        Column("Member Switches", "member_switch_count", "number"),
+        Column("Ports", "port_count", "number"),
+    ),
 ))
