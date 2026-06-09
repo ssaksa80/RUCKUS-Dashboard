@@ -95,6 +95,28 @@ def test_failing_module_error_includes_raw_body(monkeypatch, config):
     assert "bad request body" in entry["error"]
 
 
+def _raw_fetcher(ctx):
+    return {"items": [{"id": "a1"}],
+            "raw_rows": [{"weirdKey": 1, "switchName": "SW-1"}],
+            "secret": "topsecret"}
+
+
+def test_dump_captures_raw_sample(monkeypatch, config):
+    monkeypatch.setattr(dump_mod, "MODULES", {"x": _spec("x", _raw_fetcher)})
+    result = run_dump(FakeConnection(), config)
+    entry = result["modules"]["x"]
+    assert entry["raw_sample"]["raw_rows"][0]["weirdKey"] == 1
+    assert "items" not in entry["raw_sample"]  # items captured separately
+    assert entry["raw_sample"]["secret"] == "[redacted]"  # redaction applied
+
+
+def test_truncate_caps_list_and_depth():
+    big = {"rows": list(range(10))}
+    out = dump_mod._truncate(big, depth=4, max_items=3)
+    assert out["rows"][:3] == [0, 1, 2]
+    assert "more" in out["rows"][3]
+
+
 def test_drillable_module_populates_sample_drill_and_redacts(monkeypatch, config):
     monkeypatch.setattr(
         dump_mod, "MODULES",

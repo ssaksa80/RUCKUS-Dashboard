@@ -65,6 +65,12 @@ def _dump_module(slug, spec, connection, config, gate) -> dict[str, Any]:
     items = data.get("items", []) if isinstance(data, dict) else []
     entry["items"] = _redact(items)
     entry["item_count"] = len(items)
+    # raw_sample: every non-item key of the fetcher result (cluster/licenses for
+    # controller, raw_rows for traffic/vlans, etc.), redacted + truncated, so live
+    # API field shapes are visible without guessing.
+    if isinstance(data, dict):
+        raw = {k: v for k, v in data.items() if k != "items"}
+        entry["raw_sample"] = _truncate(_redact(raw))
     try:
         entry["summary"] = spec.summary_fn(data) if spec.summary_fn else None
     except Exception as exc:  # noqa: BLE001
@@ -84,6 +90,23 @@ def _dump_module(slug, spec, connection, config, gate) -> dict[str, Any]:
             except Exception as exc:  # noqa: BLE001
                 entry["sample_drill"] = {"entity_id": str(first_id), "error": str(exc)}
     return entry
+
+
+def _truncate(obj: Any, depth: int = 4, max_items: int = 3) -> Any:
+    """Bound a redacted structure for the dump: cap recursion depth and list size."""
+    if depth <= 0:
+        return "…"
+    if isinstance(obj, dict):
+        return {k: _truncate(v, depth - 1, max_items) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        capped = list(obj)[:max_items]
+        out = [_truncate(v, depth - 1, max_items) for v in capped]
+        if len(obj) > max_items:
+            out.append(f"…(+{len(obj) - max_items} more)")
+        return out
+    if isinstance(obj, str) and len(obj) > 200:
+        return obj[:200] + "…"
+    return obj
 
 
 def _error_text(exc: RuckusClientError) -> str:

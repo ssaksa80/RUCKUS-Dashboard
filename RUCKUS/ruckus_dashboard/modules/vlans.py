@@ -22,7 +22,8 @@ def fetch(ctx: FetcherContext) -> dict[str, Any]:
     )
     rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
     items = [_normalize(r) for r in rows]
-    return {"items": items, "raw_count": len(items)}
+    # raw_rows: first upstream rows (pre-normalize) so the dump exposes real keys.
+    return {"items": items, "raw_count": len(items), "raw_rows": rows[:2]}
 
 
 def summary(data: dict[str, Any]) -> dict[str, Any]:

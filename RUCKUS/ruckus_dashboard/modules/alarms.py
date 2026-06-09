@@ -13,40 +13,30 @@ _SEVERITIES = ("critical", "major", "minor", "warning")
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    # /alert/alarmSummary returns a flat dict of severity counts, not a {"list": ...} envelope.
-    summary_resp = smartzone_post(
-        ctx.connection, "alert/alarmSummary", ctx.config, {}, []
-    )
-    summary_raw = _normalize_summary(summary_resp)
-
     list_payload = _build_query(ctx.filters)
     # SmartZone 7.x serves the alarm list at /alert/alarm/list (query/alarm 404s).
+    # /alert/alarmSummary returns all-zero counts on 7.1.1, so KPIs are derived
+    # from the list rows instead (see summary()).
     list_resp = smartzone_post(
         ctx.connection, "alert/alarm/list", ctx.config, list_payload, []
     )
     list_resp = list_resp or {}
     rows = list_resp.get("list") or []
     items = [_normalize(r) for r in rows]
-    return {"items": items, "summary_raw": summary_raw}
+    return {"items": items}
 
 
 def summary(data: dict[str, Any]) -> dict[str, Any]:
-    raw = data.get("summary_raw")
-    if isinstance(raw, dict):
-        critical = int(raw.get("critical") or 0)
-        major = int(raw.get("major") or 0)
-        minor = int(raw.get("minor") or 0)
-        warning = int(raw.get("warning") or 0)
-        total = int(raw.get("total") or (critical + major + minor + warning))
-        return {"critical": critical, "major": major, "minor": minor,
-                "warning": warning, "total": total}
     items = data.get("items", [])
     counts = {sev: 0 for sev in _SEVERITIES}
+    total = 0
     for item in items:
         sev = str(item.get("severity") or "").lower()
+        cnt = int(item.get("count") or 1)
+        total += cnt
         if sev in counts:
-            counts[sev] += 1
-    counts["total"] = len(items)
+            counts[sev] += cnt
+    counts["total"] = total
     return counts
 
 
@@ -59,41 +49,13 @@ def fetch_drill(ctx: FetcherContext, entity_id: str) -> dict[str, Any]:
 
 def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
-    totals = {sev: 0 for sev in _SEVERITIES}
-    total = 0
-    have_summary = False
     for r in results:
         items.extend(r.get("items", []))
-        raw = r.get("summary_raw")
-        if isinstance(raw, dict):
-            have_summary = True
-            for sev in _SEVERITIES:
-                totals[sev] += int(raw.get(sev) or 0)
-            total += int(raw.get("total") or 0)
-    summary_raw: dict[str, Any] | None = None
-    if have_summary:
-        summary_raw = dict(totals)
-        summary_raw["total"] = total or sum(totals.values())
-    return {"items": items, "summary_raw": summary_raw}
+    return {"items": items}
 
 
 def _build_query(filters: dict | None) -> dict:
     return smartzone_query_body(filters)
-
-
-def _normalize_summary(resp: Any) -> dict[str, Any] | None:
-    if not isinstance(resp, dict):
-        return None
-    # Accept either flat dict or one wrapped in {"summary": {...}}.
-    source = resp.get("summary") if isinstance(resp.get("summary"), dict) else resp
-    critical = int(source.get("critical") or source.get("Critical") or 0)
-    major = int(source.get("major") or source.get("Major") or 0)
-    minor = int(source.get("minor") or source.get("Minor") or 0)
-    warning = int(source.get("warning") or source.get("Warning") or 0)
-    total = int(source.get("total") or source.get("Total")
-                or (critical + major + minor + warning))
-    return {"critical": critical, "major": major, "minor": minor,
-            "warning": warning, "total": total}
 
 
 def _normalize(row: dict) -> dict:
@@ -123,7 +85,6 @@ register(ModuleSpec(
     summary_fn=summary,
     requires_platforms=("smartzone",),
     requires_capabilities=(
-        ("POST", "/alert/alarmSummary"),
         ("POST", "/alert/alarm/list"),
     ),
     supports_views=("table", "grid"),
