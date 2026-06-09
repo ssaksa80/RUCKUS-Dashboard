@@ -4,16 +4,20 @@ from typing import Any
 
 from . import register
 from ._base import Column, FetcherContext, ModuleSpec, TabSpec
-from ..clients.switchm import switch_manager_query
+from ..clients.switchm import switch_manager_query, switch_query_payload
 
 POLL_SECONDS = 60
 ICON = "\U0001F3F7"  # 🏷️
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    # SmartZone 7.1.1 serves VLANs at /vlans/query (not /vlan/list).
+    # SmartZone 7.1.1 serves VLANs at /vlans/query (not /vlan/list), and this
+    # endpoint is 0-indexed: page=1 starts at firstIndex 500 (empty); page=0
+    # returns the first page.
+    limit = min(int(ctx.config.get("RUCKUS_PAGE_LIMIT", 500)), 1000)
     data = switch_manager_query(
         ctx.connection, "vlans/query", ctx.config,
+        payload=switch_query_payload(0, limit),
         fallback_paths=("vlans", "vlan/list"),
     )
     rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
