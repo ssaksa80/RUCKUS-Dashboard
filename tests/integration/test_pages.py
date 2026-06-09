@@ -85,3 +85,12 @@ def test_shell_renders_health_bar_and_pinned_nav():
         r = c.get("/m/aps")
         assert b"data-health-bar" in r.data
         assert b"nav-pinned" in r.data
+
+
+def test_topology_route_renders_graph_container():
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+    with app.test_client() as c:
+        r = c.get("/m/topology")
+        assert r.status_code == 200
+        assert b"data-topology" in r.data
+        assert b"topology.js" in r.data

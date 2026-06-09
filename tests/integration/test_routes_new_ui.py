@@ -11,7 +11,8 @@ def test_module_list_endpoint():
         slugs = {m["slug"] for m in r.json["modules"]}
         assert "aps" in slugs
         assert "switches" in slugs
-        assert len(slugs) == 18
+        assert "topology" in slugs
+        assert len(slugs) == 19
 
 def test_module_list_includes_columns_and_filters():
     app = make_app()

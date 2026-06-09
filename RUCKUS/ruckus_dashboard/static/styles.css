@@ -149,3 +149,20 @@ body.dso-mode .kpi-value { font-size: 48px; }
 body:not(.dso-mode) .dso-exit{display:none}
 /* keep health bar out of the wall view */
 body.dso-mode .health-bar{display:none}
+
+/* ── Topology map ──────────────────────────────────────────────────────── */
+.topology{display:flex;flex-direction:column;height:calc(100vh - 170px);min-height:480px}
+.topo-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem}
+.topo-controls button{background:#1b263b;color:#e6edf3;border:1px solid #2a3b52;
+  border-radius:6px;width:32px;height:32px;font-size:1rem;cursor:pointer;margin-left:4px}
+.topo-controls button:hover{border-color:#4cc9f0}
+.topo-canvas{flex:1;border:1px solid #1b263b;border-radius:8px;background:#0a1422;overflow:hidden}
+.topo-svg{width:100%;height:100%;touch-action:none;cursor:grab}
+.topo-svg:active{cursor:grabbing}
+.topo-node{cursor:pointer}
+.topo-node .glyph{font-size:20px}
+.topo-node .topo-label{fill:#c7d3e0;font-size:12px}
+.topo-node:hover .topo-label{fill:#fff}
+.edge-label{fill:#7c8aa0;font-size:10px}
+.topo-legend{display:flex;gap:1rem;padding:.5rem;color:#c7d3e0;font-size:.8rem}
+.topo-key i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:middle}
