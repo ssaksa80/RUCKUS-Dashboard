@@ -20,7 +20,7 @@ def _ctx():
 
 @responses.activate
 def test_stack_fetch_groups_switches_by_stack_id():
-    sw_base = "https://sz.example:8443/switchm/api/public"
+    sw_base = "https://sz.example:8443/switchm/api"
     responses.add(responses.POST, f"{sw_base}/v11_0/switch/view/details",
                   json=FIXTURE, status=200, match_querystring=False)
     out = stack_mod.fetch(_ctx())

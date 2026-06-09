@@ -20,7 +20,7 @@ def _ctx():
 
 @responses.activate
 def test_ports_fetch_returns_normalised_rows():
-    sw_base = "https://sz.example:8443/switchm/api/public"
+    sw_base = "https://sz.example:8443/switchm/api"
     responses.add(responses.POST, f"{sw_base}/v11_0/switch/ports/summary",
                   json=FIXTURE, status=200, match_querystring=False)
     out = ports_mod.fetch(_ctx())

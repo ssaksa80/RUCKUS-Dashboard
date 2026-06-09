@@ -23,12 +23,13 @@ def test_switch_query_payload_shape():
 
 def test_switch_manager_base_from_smartzone_base():
     sz = "https://sz.example:8443/wsg/api/public"
-    assert switch_manager_base(sz) == "https://sz.example:8443/switchm/api/public"
+    # Switch Manager base has NO /public segment (unlike the wireless wsg prefix).
+    assert switch_manager_base(sz) == "https://sz.example:8443/switchm/api"
 
 
 @responses.activate
 def test_fetch_switches_paged():
-    base = "https://sz.example:8443/switchm/api/public"
+    base = "https://sz.example:8443/switchm/api"
     responses.add(
         responses.POST,
         f"{base}/v11_0/switch/view/details",
@@ -72,8 +73,8 @@ def test_switch_api_bases_order():
     sz = "https://sz.example:8443/wsg/api/public"
     bases = switch_api_bases(sz)
     assert bases == [
+        "https://sz.example:8443/switchm/api",
         "https://sz.example:8443/switchm/api/public",
-        "https://sz.example:8443/wsg/api/public",
     ]
 
 
@@ -86,20 +87,31 @@ def _conn():
 
 
 @responses.activate
-def test_switch_manager_post_falls_back_to_wsg_base_on_404():
-    sm = "https://sz.example:8443/switchm/api/public/v11_0/switch/view/details"
-    wsg = "https://sz.example:8443/wsg/api/public/v11_0/switch/view/details"
-    responses.add(responses.POST, sm, json={"message": "not found"}, status=404)
-    responses.add(responses.POST, wsg, json={"list": [{"id": "s1"}], "totalCount": 1}, status=200)
+def test_switch_manager_post_uses_switchm_api_base():
+    # Primary base is /switchm/api (no /public).
+    primary = "https://sz.example:8443/switchm/api/v11_0/switch/view/details"
+    responses.add(responses.POST, primary,
+                  json={"list": [{"id": "s1"}], "totalCount": 1}, status=200)
     out = switch_manager_post(_conn(), "v11_0", "switch/view/details", CFG, {})
     assert out["list"][0]["id"] == "s1"
 
 
 @responses.activate
+def test_switch_manager_post_falls_back_to_legacy_public_base():
+    primary = "https://sz.example:8443/switchm/api/v11_0/switch/view/details"
+    legacy = "https://sz.example:8443/switchm/api/public/v11_0/switch/view/details"
+    responses.add(responses.POST, primary, json={"message": "not found"}, status=404)
+    responses.add(responses.POST, legacy,
+                  json={"list": [{"id": "s2"}], "totalCount": 1}, status=200)
+    out = switch_manager_post(_conn(), "v11_0", "switch/view/details", CFG, {})
+    assert out["list"][0]["id"] == "s2"
+
+
+@responses.activate
 def test_switch_manager_post_raises_when_all_bases_fail():
-    sm = "https://sz.example:8443/switchm/api/public/v11_0/switch/view/details"
-    wsg = "https://sz.example:8443/wsg/api/public/v11_0/switch/view/details"
-    responses.add(responses.POST, sm, json={"message": "x"}, status=404)
-    responses.add(responses.POST, wsg, json={"message": "x"}, status=404)
+    primary = "https://sz.example:8443/switchm/api/v11_0/switch/view/details"
+    legacy = "https://sz.example:8443/switchm/api/public/v11_0/switch/view/details"
+    responses.add(responses.POST, primary, json={"message": "x"}, status=404)
+    responses.add(responses.POST, legacy, json={"message": "x"}, status=404)
     with pytest.raises(RuckusClientError):
         switch_manager_post(_conn(), "v11_0", "switch/view/details", CFG, {})
