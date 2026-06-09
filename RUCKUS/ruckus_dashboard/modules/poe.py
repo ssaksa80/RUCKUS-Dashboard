@@ -1,19 +1,23 @@
-"""Switch PoE — power-over-Ethernet utilisation per switch module."""
+"""Switch PoE — power-over-Ethernet budget per switch.
+
+SmartZone 7.1.1's ``traffic/top/poeutilization`` rows don't carry usable
+budget fields, but every switch row reports a ``poe`` budget block
+(``total``/``free``/``percent`` watts). Derive PoE from the switch inventory."""
 from __future__ import annotations
 from typing import Any
 
 from . import register
 from ._base import Column, FetcherContext, ModuleSpec, TabSpec
-from ..clients.switchm import switch_manager_query
+from ..clients.switchm import fetch_switches
 
 POLL_SECONDS = 60
 ICON = "⚡"  # ⚡
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    data = switch_manager_query(ctx.connection, "traffic/top/poeutilization", ctx.config)
-    rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
-    items = [_normalize(r) for r in rows]
+    response = fetch_switches(ctx.connection, ctx.config) or {}
+    switches = response.get("switches") or []
+    items = [_normalize(sw) for sw in switches]
     return {"items": items, "raw_count": len(items)}
 
 
@@ -46,20 +50,23 @@ def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _normalize(row: dict) -> dict:
-    switch_id = row.get("switchId")
-    budget_w = int(row.get("budgetWatts") or 0)
-    allocated_w = int(row.get("allocatedWatts") or 0)
-    available_w = int(row.get("availableWatts") or 0)
-    ports_powered = int(row.get("portsPoweredCount") or 0)
-    util_pct = round((allocated_w / budget_w * 100) if budget_w > 0 else 0, 1)
+    poe = row.get("poe") or {}
+    budget_w = int(poe.get("total") or row.get("budgetWatts") or 0)
+    available_w = int(poe.get("free") or row.get("availableWatts") or 0)
+    allocated_w = max(0, budget_w - available_w)
+    pct = poe.get("percent")
+    util_pct = round(float(pct), 1) if pct is not None else (
+        round(allocated_w / budget_w * 100, 1) if budget_w > 0 else 0
+    )
+    sid = row.get("id") or row.get("macAddress") or row.get("switchId")
     return {
-        "id": switch_id,
-        "switch_id": switch_id,
-        "switch_name": row.get("switchName"),
+        "id": sid,
+        "switch_id": sid,
+        "switch_name": row.get("switchName") or row.get("name"),
         "budget_w": budget_w,
         "allocated_w": allocated_w,
         "available_w": available_w,
-        "ports_powered": ports_powered,
+        "ports_powered": int(row.get("portsPoweredCount") or 0),
         "util_pct": util_pct,
     }
 
@@ -75,7 +82,7 @@ register(ModuleSpec(
     ),
     summary_fn=summary,
     requires_platforms=("smartzone",),
-    requires_capabilities=(("POST", "/traffic/top/poeutilization"),),
+    requires_capabilities=(("POST", "/switch"),),
     supports_views=("table",),
     warmup=True,
     merge=merge,

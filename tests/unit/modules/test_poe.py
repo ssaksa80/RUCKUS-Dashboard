@@ -1,11 +1,9 @@
-import json, pathlib
 import responses
 from ruckus_dashboard.auth.session_store import ConnectionConfig
 from ruckus_dashboard.modules._base import FetcherContext
 from ruckus_dashboard.modules import poe as poe_mod
 from ruckus_dashboard.infra.capability_gate import CapabilityGate
 
-FIXTURE = json.loads(pathlib.Path("tests/fixtures/switchm/poe_utilization.json").read_text())
 CFG = {"RUCKUS_TIMEOUT_SECONDS": 5, "RUCKUS_DEBUG_BYTES": 1000,
        "RUCKUS_PAGE_LIMIT": 500, "RUCKUS_HOST_ALLOWLIST": None}
 
@@ -19,18 +17,23 @@ def _ctx():
 
 
 @responses.activate
-def test_poe_fetch_returns_normalised_rows():
+def test_poe_derived_from_switch_poe_block():
+    # PoE budget is derived from each switch row's poe block (7.1.1 shape).
     sw_base = "https://sz.example:8443/switchm/api"
-    responses.add(responses.POST, f"{sw_base}/v11_0/traffic/top/poeutilization",
-                  json=FIXTURE, status=200, match_querystring=False)
+    responses.add(responses.POST, f"{sw_base}/v11_0/switch",
+                  json={"list": [
+                      {"id": "s1", "switchName": "SW-1",
+                       "poe": {"total": 740, "free": 500, "percent": 32.4}},
+                  ], "totalCount": 1, "hasMore": False},
+                  status=200, match_querystring=False)
     out = poe_mod.fetch(_ctx())
-    assert len(out["items"]) == 3
-    first = out["items"][0]
-    assert first["switch_name"] == "SW-1"
-    assert first["budget_w"] == 740
-    assert first["allocated_w"] == 320
-    # util_pct: 320/740*100 = 43.243... -> 43.2
-    assert first["util_pct"] == 43.2
+    assert len(out["items"]) == 1
+    row = out["items"][0]
+    assert row["switch_name"] == "SW-1"
+    assert row["budget_w"] == 740
+    assert row["available_w"] == 500
+    assert row["allocated_w"] == 240
+    assert row["util_pct"] == 32.4
 
 
 def test_poe_summary_aggregates():
