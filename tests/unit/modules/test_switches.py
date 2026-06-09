@@ -45,3 +45,43 @@ def test_switches_summary_aggregates_status_and_ports():
 def test_switches_registered():
     from ruckus_dashboard.modules import MODULES
     assert MODULES["switches"].fetcher is switches_mod.fetch
+
+
+def test_switches_normalize_real_smartzone_711_row():
+    """Field mapping against the real /switch row shape (SmartZone 7.1.1)."""
+    from ruckus_dashboard.modules.switches import _normalize
+    row = {
+        "id": "40:B8:2D:02:EB:58", "macAddress": "40:B8:2D:02:EB:58",
+        "switchName": "AHDSP-SERVER-FARM", "model": "ICX7550-24",
+        "ipAddress": "172.26.200.243", "status": "ONLINE",
+        "firmwareVersion": "GZR10010g_cd5", "upTime": "186 days, 21:07:29.00",
+        "stackId": None, "numOfUnits": 2, "groupName": "AHD-SP-SW",
+        "serialNumber": "FMK4417W00H",
+        "portStatus": {"up": 24, "down": 25, "total": 52}, "ports": 52,
+    }
+    n = _normalize(row)
+    assert n["name"] == "AHDSP-SERVER-FARM"
+    assert n["ip"] == "172.26.200.243"
+    assert n["status"] == "online"
+    assert n["fw"] == "GZR10010g_cd5"
+    assert n["ports_online"] == 24
+    assert n["ports_total"] == 52
+    assert n["stack"] == "AHD-SP-SW"  # falls back to group when stackId null
+    assert n["serial"] == "FMK4417W00H"
+
+
+def test_stack_groups_multi_unit_switch_as_stack():
+    """A switch row with numOfUnits>1 (stackId null) is one stack (7.1.1 shape)."""
+    from ruckus_dashboard.modules.stack import _group_by_stack
+    rows = [
+        {"id": "AA", "switchName": "S1", "numOfUnits": 2, "modules": "stack",
+         "firmwareVersion": "GZR10010g", "groupName": "G1",
+         "portStatus": {"up": 24, "total": 52}},
+        {"id": "BB", "switchName": "S2", "numOfUnits": 1, "modules": "",
+         "portStatus": {"up": 10, "total": 24}},
+    ]
+    out = _group_by_stack(rows)
+    assert len(out) == 1
+    assert out[0]["stack_id"] == "AA"
+    assert out[0]["members"] == 2
+    assert out[0]["ports_up"] == 24
