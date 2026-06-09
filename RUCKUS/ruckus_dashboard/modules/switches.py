@@ -5,7 +5,7 @@ from typing import Any
 from . import register
 from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
 from ..clients.switchm import (
-    _api_version_fallbacks, fetch_switches, switch_manager_post,
+    _api_version_fallbacks, fetch_switches, switch_manager_post, switch_manager_query,
 )
 
 POLL_SECONDS = 60
@@ -46,18 +46,15 @@ def _drill_ports(ctx: FetcherContext, entity_id: str) -> list[dict[str, Any]]:
     failure on every candidate returns an empty list (never raises)."""
     from ..clients.base import RuckusClientError
 
-    limit = min(int(ctx.config.get("RUCKUS_PAGE_LIMIT", 500)), 1000)
-    payload = {"page": 0, "limit": limit}
     rows: list[dict[str, Any]] = []
-    for version in _api_version_fallbacks(ctx.connection.api_version):
-        try:
-            data = switch_manager_post(
-                ctx.connection, version, "switch/ports/summary", ctx.config, payload,
-            )
-        except RuckusClientError:
-            continue
+    try:
+        data = switch_manager_query(
+            ctx.connection, "switch/ports/summary", ctx.config,
+            fallback_paths=("switch/ports/details", "portSettings/query"),
+        )
         rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
-        break
+    except RuckusClientError:
+        rows = []  # drill ports are best-effort; absent section is acceptable
     ports = []
     for r in rows:
         if str(r.get("switchId")) != str(entity_id):

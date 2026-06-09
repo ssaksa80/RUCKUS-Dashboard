@@ -153,23 +153,30 @@ def switch_manager_query(
     config: dict[str, Any],
     *,
     payload: dict[str, Any] | None = None,
+    fallback_paths: tuple[str, ...] = (),
 ) -> Any:
-    """POST a switch-manager query across API-version fallbacks.
+    """POST a switch-manager query across version + path candidates.
 
-    Uses the full SmartZone query envelope by default (page is 1-indexed) and
-    surfaces the last error by re-raising on total failure, so callers (and the
-    --dump) see the real HTTP status instead of a silently-empty result.
+    Tries ``path`` then each ``fallback_paths`` entry, across every API-version
+    fallback. The published OpenAPI surface and the runtime endpoints don't
+    always agree per controller build (e.g. SmartZone 7.1.1 serves ``/switch``
+    but 404s ``/switch/view/details``), so callers pass the discovered
+    candidates and the first non-error wins. Uses the full query envelope
+    (page 1-indexed) by default and re-raises the last error on total failure,
+    so the --dump and module envelope show the real HTTP status.
     """
     if payload is None:
         limit = min(int(config.get("RUCKUS_PAGE_LIMIT", 500)), 1000)
         payload = switch_query_payload(1, limit)
+    candidates = [path, *fallback_paths]
     last_error: RuckusClientError | None = None
     for version in _api_version_fallbacks(connection.api_version):
-        try:
-            return switch_manager_post(connection, version, path, config, payload)
-        except RuckusClientError as exc:
-            last_error = exc
-            continue
+        for candidate in candidates:
+            try:
+                return switch_manager_post(connection, version, candidate, config, payload)
+            except RuckusClientError as exc:
+                last_error = exc
+                continue
     if last_error is not None:
         raise last_error
     return {}
