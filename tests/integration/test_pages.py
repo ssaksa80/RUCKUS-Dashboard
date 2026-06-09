@@ -57,3 +57,22 @@ def test_overview_renders_warmup_strip_when_authenticated():
         assert r.status_code == 200
         assert b"warmup-strip" in r.data
         assert b"tile-skeleton" in r.data
+
+
+def test_overview_module_route_renders_tile_grid():
+    # /m/overview must render the DSO tile grid, not the empty module table.
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+    with app.test_client() as c:
+        r = c.get("/m/overview")
+        assert r.status_code == 200
+        assert b"tile-grid" in r.data
+        assert b"data-kpi-strip" not in r.data  # not the module table page
+
+
+def test_shell_renders_health_bar_and_pinned_nav():
+    # Health bar + pinned DSO Overview present on a normal module page.
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+    with app.test_client() as c:
+        r = c.get("/m/aps")
+        assert b"data-health-bar" in r.data
+        assert b"nav-pinned" in r.data

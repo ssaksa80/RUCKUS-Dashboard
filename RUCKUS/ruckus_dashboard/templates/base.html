@@ -14,8 +14,13 @@
       <span class="brand-title">DSO Dashboard</span>
     </div>
     <nav class="module-nav">
+      <a href="/" data-slug="overview"
+         class="nav-item nav-pinned {% if active_slug == 'overview' %}active{% endif %}">
+        <span class="nav-icon">🛰️</span>
+        <span class="nav-label">DSO Overview</span>
+      </a>
       {% set groups = {} %}
-      {% for m in modules %}{% set _ = groups.setdefault(m.group, []).append(m) %}{% endfor %}
+      {% for m in modules if m.slug != 'overview' %}{% set _ = groups.setdefault(m.group, []).append(m) %}{% endfor %}
       {% for group, items in groups.items() %}
       <div class="nav-group">
         <h3 class="nav-group-title">{{ group }}</h3>
@@ -45,6 +50,7 @@
         </form>
       </div>
     </header>
+    {% include "partials/health_bar.html" %}
     {% block content %}{% endblock %}
   </main>
 </div>

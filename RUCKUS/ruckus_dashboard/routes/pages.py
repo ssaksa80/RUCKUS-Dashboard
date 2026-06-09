@@ -24,6 +24,11 @@ def module_page(slug: str):
     spec = MODULES.get(slug)
     if spec is None:
         abort(404)
+    if slug == "overview":
+        # Overview is tiles-only; render the DSO grid, not an empty data table.
+        return render_template("overview.html",
+                               modules=all_modules(),
+                               csrf_token=session.get("csrf_token", ""))
     return render_template("module.html",
                            module=spec,
                            modules=all_modules(),

@@ -45,3 +45,13 @@ def test_dashboard_js_contains_columns_filters_rowclick():
         for symbol in ["renderColumns", "renderFilters", "humanBytes",
                        "humanUptime", "status-pill", "data-href", "/m/"]:
             assert symbol in body, f"missing symbol: {symbol}"
+
+
+def test_dashboard_js_contains_health_bar():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        for symbol in ["renderHealthBar", "applyHealthState", "pickSummaryNumber",
+                       "data-health-value"]:
+            assert symbol in body, f"missing symbol: {symbol}"
