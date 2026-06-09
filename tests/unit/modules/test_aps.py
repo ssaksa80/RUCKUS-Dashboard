@@ -65,3 +65,19 @@ def test_aps_registered_in_modules_registry():
     from ruckus_dashboard.modules import MODULES
     assert MODULES["aps"].slug == "aps"
     assert MODULES["aps"].fetcher is aps_mod.fetch
+
+
+@responses.activate
+def test_aps_paginates_beyond_500():
+    """800 APs are fetched across two pages, not capped at 500."""
+    base = "https://sz.example:8443/wsg/api/public"
+    page1 = {"list": [{"apMac": f"AA:{i:02X}", "deviceName": f"AP{i}",
+                       "model": "R650", "status": "Online"} for i in range(500)],
+             "totalCount": 800, "hasMore": True}
+    page2 = {"list": [{"apMac": f"BB:{i:02X}", "deviceName": f"AP{500+i}",
+                       "model": "R650", "status": "Online"} for i in range(300)],
+             "totalCount": 800, "hasMore": False}
+    responses.add(responses.POST, f"{base}/v11_0/query/ap", json=page1, status=200)
+    responses.add(responses.POST, f"{base}/v11_0/query/ap", json=page2, status=200)
+    out = aps_mod.fetch(_ctx())
+    assert len(out["items"]) == 800

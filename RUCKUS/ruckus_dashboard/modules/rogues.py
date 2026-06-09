@@ -4,7 +4,7 @@ from typing import Any
 
 from . import register
 from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
-from ..clients.smartzone import smartzone_post, smartzone_query_body
+from ..clients.smartzone import smartzone_query_paged
 
 POLL_SECONDS = 60
 ICON = "\U0001F47B"  # ghost emoji
@@ -13,15 +13,9 @@ _CLASSIFICATIONS = ("malicious", "rogue", "known")
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    payload = _build_query(ctx.filters)
-    # smartzone_post signature: (connection, path, config, body, debug, *, optional=False)
-    response = smartzone_post(
-        ctx.connection, "query/roguesInfoList", ctx.config, payload, []
-    )
-    response = response or {}
-    rows = response.get("list") or []
+    rows = smartzone_query_paged(ctx.connection, "query/roguesInfoList", ctx.config, [])
     items = [_normalize(r) for r in rows]
-    return {"items": items, "raw_count": response.get("totalCount", len(rows))}
+    return {"items": items, "raw_count": len(rows)}
 
 
 def summary(data: dict[str, Any]) -> dict[str, Any]:
@@ -48,10 +42,6 @@ def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
         items.extend(r.get("items", []))
         raw += int(r.get("raw_count", 0))
     return {"items": items, "raw_count": raw}
-
-
-def _build_query(filters: dict | None) -> dict:
-    return smartzone_query_body(filters)
 
 
 def _normalize(row: dict) -> dict:

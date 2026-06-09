@@ -180,7 +180,7 @@ function renderColumns(root, slug, spec, items) {
     : Object.keys(rows[0]).map(k => ({ label: k, key: k, kind: "text" }));
 
   const head = cols.map(c => `<th>${c.label}</th>`).join("");
-  const body = rows.slice(0, 200).map(row => {
+  const body = rows.slice(0, 2000).map(row => {
     const id = row.id != null ? encodeURIComponent(row.id) : "";
     const href = id ? `/m/${encodeURIComponent(slug)}/${id}` : "";
     const cells = cols.map(c => `<td>${formatCell(row[c.key], c.kind)}</td>`).join("");
