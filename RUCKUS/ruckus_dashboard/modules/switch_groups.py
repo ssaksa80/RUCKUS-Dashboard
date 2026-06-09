@@ -4,26 +4,17 @@ from typing import Any
 
 from . import register
 from ._base import Column, FetcherContext, ModuleSpec, TabSpec
-from ..clients.base import RuckusClientError, _extract_items
-from ..clients.switchm import _api_version_fallbacks, switch_manager_post
+from ..clients.base import _extract_items
+from ..clients.switchm import switch_manager_query
 
 POLL_SECONDS = 120
 ICON = "\U0001F5C2️"  # 🗂️
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    limit = min(int(ctx.config.get("RUCKUS_PAGE_LIMIT", 500)), 1000)
-    payload = {"page": 0, "limit": limit}
-    rows: list[dict[str, Any]] = []
-    for version in _api_version_fallbacks(ctx.connection.api_version):
-        try:
-            data = switch_manager_post(
-                ctx.connection, version, "group/list", ctx.config, payload,
-            )
-        except RuckusClientError:
-            continue
-        rows = [r for r in _extract_items(data) if isinstance(r, dict)]
-        break
+    # SmartZone 7.x exposes the switch-group query at POST /group (not /group/list).
+    data = switch_manager_query(ctx.connection, "group", ctx.config)
+    rows = [r for r in _extract_items(data) if isinstance(r, dict)]
     items = [_normalize(r) for r in rows]
     return {"items": items, "raw_count": len(items)}
 

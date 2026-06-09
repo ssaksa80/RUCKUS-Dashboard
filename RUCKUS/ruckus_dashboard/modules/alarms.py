@@ -20,8 +20,9 @@ def fetch(ctx: FetcherContext) -> dict[str, Any]:
     summary_raw = _normalize_summary(summary_resp)
 
     list_payload = _build_query(ctx.filters)
+    # SmartZone 7.x serves the alarm list at /alert/alarm/list (query/alarm 404s).
     list_resp = smartzone_post(
-        ctx.connection, "query/alarm", ctx.config, list_payload, []
+        ctx.connection, "alert/alarm/list", ctx.config, list_payload, []
     )
     list_resp = list_resp or {}
     rows = list_resp.get("list") or []
@@ -50,7 +51,7 @@ def summary(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def fetch_drill(ctx: FetcherContext, entity_id: str) -> dict[str, Any]:
-    # Alarm objects are returned in full by /query/alarm; SmartZone does not
+    # Alarm objects are returned in full by /alert/alarm/list; SmartZone does not
     # expose a per-alarm detail endpoint. Provide a minimal identity payload
     # so the drill route has a uniform shape across modules.
     return {"identity": {"id": entity_id}, "raw": None}
@@ -123,7 +124,7 @@ register(ModuleSpec(
     requires_platforms=("smartzone",),
     requires_capabilities=(
         ("POST", "/alert/alarmSummary"),
-        ("POST", "/query/alarm"),
+        ("POST", "/alert/alarm/list"),
     ),
     supports_views=("table", "grid"),
     warmup=True,

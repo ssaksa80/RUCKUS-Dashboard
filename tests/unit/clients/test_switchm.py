@@ -60,3 +60,46 @@ def test_fetch_switches_paged():
     out = fetch_switches(conn, CFG)
     assert len(out["switches"]) == 1
     assert out["switches"][0]["name"] == "SW-1"
+
+
+# ─── base fallback + error surfacing (live SmartZone 7.x: switch ops on wsg base) ───
+import pytest
+from ruckus_dashboard.clients.base import RuckusClientError
+from ruckus_dashboard.clients.switchm import switch_api_bases, switch_manager_post
+
+
+def test_switch_api_bases_order():
+    sz = "https://sz.example:8443/wsg/api/public"
+    bases = switch_api_bases(sz)
+    assert bases == [
+        "https://sz.example:8443/switchm/api/public",
+        "https://sz.example:8443/wsg/api/public",
+    ]
+
+
+def _conn():
+    return ConnectionConfig(
+        platform="smartzone", api_base="https://sz.example:8443/wsg/api/public",
+        display_name="SZ", auth_token="t", api_version="v11_0",
+        verify_tls=False, token_expires_at=9999999999,
+    )
+
+
+@responses.activate
+def test_switch_manager_post_falls_back_to_wsg_base_on_404():
+    sm = "https://sz.example:8443/switchm/api/public/v11_0/switch/view/details"
+    wsg = "https://sz.example:8443/wsg/api/public/v11_0/switch/view/details"
+    responses.add(responses.POST, sm, json={"message": "not found"}, status=404)
+    responses.add(responses.POST, wsg, json={"list": [{"id": "s1"}], "totalCount": 1}, status=200)
+    out = switch_manager_post(_conn(), "v11_0", "switch/view/details", CFG, {})
+    assert out["list"][0]["id"] == "s1"
+
+
+@responses.activate
+def test_switch_manager_post_raises_when_all_bases_fail():
+    sm = "https://sz.example:8443/switchm/api/public/v11_0/switch/view/details"
+    wsg = "https://sz.example:8443/wsg/api/public/v11_0/switch/view/details"
+    responses.add(responses.POST, sm, json={"message": "x"}, status=404)
+    responses.add(responses.POST, wsg, json={"message": "x"}, status=404)
+    with pytest.raises(RuckusClientError):
+        switch_manager_post(_conn(), "v11_0", "switch/view/details", CFG, {})

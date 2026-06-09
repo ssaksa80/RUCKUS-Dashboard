@@ -90,15 +90,31 @@ def _controller_root(api_base: str) -> str:
 
 
 def switch_manager_base(smartzone_api_base: str) -> str:
-    """Derive the Switch Manager API base from a SmartZone API base.
+    """Derive the dedicated Switch Manager API base from a SmartZone API base.
 
     The monolith inlined this swap (``/wsg/api/public`` -> ``/switchm/api/public``)
-    inside ``_switch_manager_post``; pulled out for testability. The substring
-    swap matches the behaviour of ``_controller_root + "/switchm/api"`` because
-    the public SmartZone prefix is always ``/wsg/api/public`` after
-    ``normalize_smartzone_base``.
+    inside ``_switch_manager_post``; pulled out for testability.
     """
     return smartzone_api_base.replace("/wsg/api/public", "/switchm/api/public")
+
+
+def switch_api_bases(smartzone_api_base: str) -> list[str]:
+    """API bases to try for switch-manager endpoints, in priority order.
+
+    Older SmartZone served switch management under ``/switchm/api/public``;
+    SmartZone 7.x folds it into the main ``/wsg/api/public`` surface (confirmed
+    against 7.1.1: the dedicated base 404s, the wsg base serves the same
+    ``/switch/...`` and ``/traffic/...`` ops). Try the dedicated base first for
+    back-compat, then the wsg base.
+    """
+    candidates = [switch_manager_base(smartzone_api_base), smartzone_api_base]
+    seen: set[str] = set()
+    out: list[str] = []
+    for base in candidates:
+        if base not in seen:
+            seen.add(base)
+            out.append(base)
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,6 +147,34 @@ def _api_version_fallbacks(api_version: str) -> list[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Query payload + POST helper (monolith 1464-1496)
 # ─────────────────────────────────────────────────────────────────────────────
+def switch_manager_query(
+    connection: ConnectionConfig,
+    path: str,
+    config: dict[str, Any],
+    *,
+    payload: dict[str, Any] | None = None,
+) -> Any:
+    """POST a switch-manager query across API-version fallbacks.
+
+    Uses the full SmartZone query envelope by default (page is 1-indexed) and
+    surfaces the last error by re-raising on total failure, so callers (and the
+    --dump) see the real HTTP status instead of a silently-empty result.
+    """
+    if payload is None:
+        limit = min(int(config.get("RUCKUS_PAGE_LIMIT", 500)), 1000)
+        payload = switch_query_payload(1, limit)
+    last_error: RuckusClientError | None = None
+    for version in _api_version_fallbacks(connection.api_version):
+        try:
+            return switch_manager_post(connection, version, path, config, payload)
+        except RuckusClientError as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+    return {}
+
+
 def switch_query_payload(
     page: int, limit: int, sort_column: str = "serialNumber"
 ) -> dict[str, Any]:
@@ -161,20 +205,33 @@ def switch_manager_post(
 ) -> Any:
     verify_tls = connection.verify_tls
     _maybe_disable_tls_warnings(verify_tls)
-    url = (
-        f"{switch_manager_base(connection.api_base)}"
-        f"/{version}/{path.lstrip('/')}"
-    )
-    return request_json(
-        "POST", url, config,
-        params={"serviceTicket": connection.auth_token}, json=payload,
-        verify=verify_tls,
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/json;charset=UTF-8",
-        },
-        debug_label=f"Switch Manager {path}",
-    )
+    bases = switch_api_bases(connection.api_base)
+    last_error: RuckusClientError | None = None
+    for base in bases:
+        url = f"{base}/{version}/{path.lstrip('/')}"
+        try:
+            return request_json(
+                "POST", url, config,
+                params={"serviceTicket": connection.auth_token}, json=payload,
+                verify=verify_tls,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json;charset=UTF-8",
+                },
+                debug_label=f"Switch Manager {path}",
+            )
+        except RuckusClientError as exc:
+            last_error = exc
+            # 404 = this base does not serve the op; try the next base.
+            # Any other status: still try the next base, but remember the error.
+            if exc.status_code == 404:
+                continue
+            continue
+    # All bases failed — surface the last error instead of silently swallowing.
+    if last_error is not None:
+        raise last_error
+    # Should be unreachable (bases is never empty), but keep types honest.
+    raise RuckusClientError(f"Switch Manager {path} had no API base to try.", 502)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -211,6 +268,7 @@ def fetch_switches(
     limit = min(int(config["RUCKUS_PAGE_LIMIT"]), 1000)
     max_records = int(config.get("RUCKUS_MAX_SWITCH_RECORDS", 2000))
     candidates = ["switch", "switch/view/details"]
+    last_error: RuckusClientError | None = None
 
     for version in _api_version_fallbacks(connection.api_version):
         for path in candidates:
@@ -239,18 +297,21 @@ def fetch_switches(
                         break
                     page += 1
             except RuckusClientError as exc:
+                last_error = exc
                 debug.append(
                     {
-                        "label": f"POST /switchm/api/{version}/{path}",
+                        "label": f"POST {version}/{path}",
                         "status": exc.status_code,
                         "domain": "ICX switches",
                     }
                 )
                 continue
             if ok:
+                # Success — including the legitimate HTTP-200 empty result
+                # (controller manages no switches). Empty list is NOT an error.
                 debug.append(
                     {
-                        "label": f"POST /switchm/api/{version}/{path}",
+                        "label": f"POST {version}/{path}",
                         "status": "ok",
                         "domain": "ICX switches",
                         "records": len(rows),
@@ -259,4 +320,8 @@ def fetch_switches(
                 aggregate = _aggregate_switch_status(rows)
                 return {"switches": rows, **aggregate}
 
-    return None
+    # Every version × path × base errored — surface it instead of returning None,
+    # so module_data envelopes it and --dump shows the real HTTP status/body.
+    if last_error is not None:
+        raise last_error
+    return {"switches": [], "total": 0, "online": 0, "offline": 0}
