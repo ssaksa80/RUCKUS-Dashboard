@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import register
-from ._base import FetcherContext, ModuleSpec, TabSpec
+from ._base import Column, FetcherContext, ModuleSpec, TabSpec
 from ..clients.smartzone import smartzone_query_paged
 from ..security import SecurityLookupCache, validate_assets
 
@@ -27,7 +27,23 @@ def fetch(ctx: FetcherContext) -> dict[str, Any]:
     assets = [_build_asset(r) for r in rows or []]
     cache = SecurityLookupCache(int(ctx.config["RUCKUS_SECURITY_CACHE_SECONDS"]))
     validation = validate_assets(assets, ctx.config, cache)
+    for a in assets:
+        _flatten_security(a)
     return {"items": assets, "raw_count": len(assets), "validation": validation}
+
+
+def _flatten_security(asset: dict[str, Any]) -> dict[str, Any]:
+    """Lift the nested ``security`` dict into flat, table-friendly columns
+    (the raw dict is kept for the drill/raw view)."""
+    sec = asset.get("security") or {}
+    ke = sec.get("known_exploited")
+    ke_status = ke.get("status") if isinstance(ke, dict) else ke
+    cves = sec.get("known_cves")
+    asset["sec_status"] = sec.get("status") or "unknown"
+    asset["known_cve_count"] = len(cves) if isinstance(cves, list) else 0
+    asset["exploited"] = "no" if str(ke_status or "none").lower() in ("none", "", "no") else "yes"
+    asset["sec_summary"] = sec.get("summary") or ""
+    return asset
 
 
 def summary(data: dict[str, Any]) -> dict[str, Any]:
@@ -67,4 +83,13 @@ register(ModuleSpec(
     requires_capabilities=(("POST", "/query/ap"),),
     supports_views=("table",),
     warmup=True, merge=merge,
+    columns=(
+        Column("Name", "name"),
+        Column("Model", "model"),
+        Column("Firmware", "firmware_version"),
+        Column("Status", "sec_status", "status"),
+        Column("Known CVEs", "known_cve_count", "number"),
+        Column("Exploited", "exploited", "status"),
+        Column("Summary", "sec_summary"),
+    ),
 ))

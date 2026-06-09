@@ -52,3 +52,22 @@ def test_security_summary_counts_by_status():
 def test_security_registered():
     from ruckus_dashboard.modules import MODULES
     assert MODULES["security"].fetcher is security_mod.fetch
+
+
+def test_security_flatten_lifts_nested_fields():
+    a = {"security": {"status": "ok", "summary": "No public KEV/CVE match",
+                      "known_cves": ["CVE-1", "CVE-2"],
+                      "known_exploited": {"status": "none"}}}
+    security_mod._flatten_security(a)
+    assert a["sec_status"] == "ok"
+    assert a["known_cve_count"] == 2
+    assert a["exploited"] == "no"
+    assert a["sec_summary"] == "No public KEV/CVE match"
+
+
+def test_security_flatten_marks_exploited():
+    a = {"security": {"status": "critical",
+                      "known_exploited": {"status": "active"}}}
+    security_mod._flatten_security(a)
+    assert a["exploited"] == "yes"
+    assert a["sec_status"] == "critical"
