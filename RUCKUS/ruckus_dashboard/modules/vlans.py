@@ -11,7 +11,11 @@ ICON = "\U0001F3F7"  # 🏷️
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    data = switch_manager_query(ctx.connection, "vlan/list", ctx.config)
+    # SmartZone 7.1.1 serves VLANs at /vlans/query (not /vlan/list).
+    data = switch_manager_query(
+        ctx.connection, "vlans/query", ctx.config,
+        fallback_paths=("vlans", "vlan/list"),
+    )
     rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
     items = [_normalize(r) for r in rows]
     return {"items": items, "raw_count": len(items)}

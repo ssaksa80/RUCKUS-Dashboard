@@ -12,8 +12,12 @@ ICON = "\U0001F5C2️"  # 🗂️
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    # SmartZone 7.x exposes the switch-group query at POST /group (not /group/list).
-    data = switch_manager_query(ctx.connection, "group", ctx.config)
+    # SmartZone 7.x exposes switch groups at POST /group; fall back to the
+    # group model-config query if a build doesn't serve the bare list.
+    data = switch_manager_query(
+        ctx.connection, "group", ctx.config,
+        fallback_paths=("groupModelConfigs/query",),
+    )
     rows = [r for r in _extract_items(data) if isinstance(r, dict)]
     items = [_normalize(r) for r in rows]
     return {"items": items, "raw_count": len(items)}

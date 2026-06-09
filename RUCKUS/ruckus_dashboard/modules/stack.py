@@ -11,7 +11,11 @@ ICON = "\U0001F3D7"  # 🏗️
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    data = switch_manager_query(ctx.connection, "switch/view/details", ctx.config)
+    # SmartZone 7.1.1 serves the switch list at /switch (not /switch/view/details).
+    data = switch_manager_query(
+        ctx.connection, "switch", ctx.config,
+        fallback_paths=("switch/view/details",),
+    )
     rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
     items = _group_by_stack(rows)
     return {"items": items, "raw_count": len(items)}
