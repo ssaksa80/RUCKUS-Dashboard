@@ -21,7 +21,7 @@ def _ctx():
 @responses.activate
 def test_vlans_fetch_returns_normalised_rows():
     sw_base = "https://sz.example:8443/switchm/api"
-    responses.add(responses.POST, f"{sw_base}/v11_0/vlan/list",
+    responses.add(responses.POST, f"{sw_base}/v11_0/vlans/query",
                   json=FIXTURE, status=200, match_querystring=False)
     out = vlans_mod.fetch(_ctx())
     assert len(out["items"]) == 3
