@@ -57,6 +57,18 @@ def test_controller_summary_handles_missing_pieces():
     assert s["total_aps"] == 0
 
 
+def test_controller_merge_preserves_cluster_and_devices():
+    # Default merge keeps only items; controller.merge must keep cluster/devices
+    # so the KPI summary is not zeroed out by the data route.
+    merged = controller_mod.merge([
+        {"items": [{"node": "n1"}], "cluster": CLUSTER, "devices": DEVICES},
+    ])
+    assert merged["cluster"]["clusterState"] == "In_Service"
+    assert merged["devices"]["totalAps"] == 932
+    s = controller_mod.summary(merged)
+    assert s["total_aps"] == 932
+
+
 def test_controller_registered():
     from ruckus_dashboard.modules import MODULES
     assert MODULES["controller"].fetcher is controller_mod.fetch

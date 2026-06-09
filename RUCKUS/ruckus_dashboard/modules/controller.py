@@ -41,6 +41,19 @@ def fetch(ctx: FetcherContext) -> dict[str, Any]:
     return {"items": items, "cluster": cluster, "devices": devices}
 
 
+def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
+    # Preserve cluster/devices (the default merge keeps only items, which would
+    # zero out every KPI). Controller is effectively a single-cluster singleton.
+    items: list[dict[str, Any]] = []
+    cluster: dict | None = None
+    devices: dict | None = None
+    for r in results:
+        items.extend(r.get("items", []))
+        cluster = cluster or r.get("cluster")
+        devices = devices or r.get("devices")
+    return {"items": items, "cluster": cluster, "devices": devices}
+
+
 def summary(data: dict[str, Any]) -> dict[str, Any]:
     cluster = data.get("cluster") or {}
     devices = data.get("devices") or {}
@@ -76,7 +89,7 @@ register(ModuleSpec(
     requires_capabilities=(("GET", "/cluster/state"),),
     supports_views=("table",),
     warmup=True,
-    merge=None,
+    merge=merge,
     columns=(
         Column("Node", "node"),
         Column("State", "state", "status"),
