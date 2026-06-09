@@ -179,14 +179,18 @@ function renderColumns(root, slug, spec, items) {
     ? spec.columns
     : Object.keys(rows[0]).map(k => ({ label: k, key: k, kind: "text" }));
 
+  // Rows are only clickable when the module actually has a drill-in page;
+  // otherwise navigating produces a 404 (e.g. controller has no drill_fetcher).
+  const drillable = !!spec.has_drill;
   const head = cols.map(c => `<th>${c.label}</th>`).join("");
   const body = rows.slice(0, 2000).map(row => {
     const id = row.id != null ? encodeURIComponent(row.id) : "";
-    const href = id ? `/m/${encodeURIComponent(slug)}/${id}` : "";
+    const href = (drillable && id) ? `/m/${encodeURIComponent(slug)}/${id}` : "";
     const cells = cols.map(c => `<td>${formatCell(row[c.key], c.kind)}</td>`).join("");
     return `<tr${href ? ` data-href="${href}"` : ""}>${cells}</tr>`;
   }).join("");
-  area.innerHTML = `<table class="data-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  area.innerHTML = `<table class="data-table${drillable ? " clickable" : ""}">` +
+                   `<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 
   // Whole-row click → drill page.
   area.querySelectorAll("tr[data-href]").forEach(tr => {

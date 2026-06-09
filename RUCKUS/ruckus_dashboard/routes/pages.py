@@ -38,7 +38,7 @@ def module_page(slug: str):
 @bp.get("/m/<slug>/<entity_id>")
 def drill_page(slug: str, entity_id: str):
     spec = MODULES.get(slug)
-    if spec is None:
+    if spec is None or spec.drill_fetcher is None:
         abort(404)
     return render_template("module.html",
                            module=spec,

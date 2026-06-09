@@ -69,6 +69,15 @@ def test_overview_module_route_renders_tile_grid():
         assert b"data-kpi-strip" not in r.data  # not the module table page
 
 
+def test_drill_page_404_for_module_without_drill():
+    # Controller has no drill_fetcher; a drill URL must 404, not render a broken
+    # page that then polls a 404 drill endpoint.
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+    with app.test_client() as c:
+        r = c.get("/m/controller/some-node-id")
+        assert r.status_code == 404
+
+
 def test_shell_renders_health_bar_and_pinned_nav():
     # Health bar + pinned DSO Overview present on a normal module page.
     app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
