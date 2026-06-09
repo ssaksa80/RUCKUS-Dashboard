@@ -11,14 +11,15 @@ ICON = "\U0001F3F7"  # 🏷️
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    # SmartZone 7.1.1 serves VLANs at /vlans/query (not /vlan/list), and this
-    # endpoint is 0-indexed: page=1 starts at firstIndex 500 (empty); page=0
-    # returns the first page.
+    # SmartZone 7.1.1 serves VLANs at /vlans/query. Two gotchas vs the switch
+    # query: it is 0-indexed (page=1 starts at firstIndex 500 → empty), and the
+    # default sortColumn "serialNumber" is invalid for VLANs (rawDataTotalCount
+    # comes back 0). So: page=0 and no sortColumn.
     limit = min(int(ctx.config.get("RUCKUS_PAGE_LIMIT", 500)), 1000)
     data = switch_manager_query(
         ctx.connection, "vlans/query", ctx.config,
-        payload=switch_query_payload(0, limit),
-        fallback_paths=("vlans", "vlan/list"),
+        payload=switch_query_payload(0, limit, sort_column=""),
+        fallback_paths=("vlans",),
     )
     rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
     items = [_normalize(r) for r in rows]
