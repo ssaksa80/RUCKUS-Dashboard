@@ -7,7 +7,7 @@ from ruckus_dashboard.infra.capability_gate import CapabilityGate
 CFG = {"RUCKUS_TIMEOUT_SECONDS": 5, "RUCKUS_DEBUG_BYTES": 1000,
        "RUCKUS_PAGE_LIMIT": 500, "RUCKUS_HOST_ALLOWLIST": None,
        "RUCKUS_MAX_SWITCH_RECORDS": 2000}
-SW_BASE = "https://sz.example:8443/switchm/api/public"
+SW_BASE = "https://sz.example:8443/switchm/api"
 
 
 def _ctx():

@@ -90,24 +90,24 @@ def _controller_root(api_base: str) -> str:
 
 
 def switch_manager_base(smartzone_api_base: str) -> str:
-    """Derive the dedicated Switch Manager API base from a SmartZone API base.
+    """Derive the Switch Manager API base from a SmartZone API base.
 
-    The monolith inlined this swap (``/wsg/api/public`` -> ``/switchm/api/public``)
-    inside ``_switch_manager_post``; pulled out for testability.
+    The Switch Manager API lives at ``{root}/switchm/api`` (note: NO ``/public``
+    segment, unlike the wireless ``/wsg/api/public`` prefix). Confirmed against
+    SmartZone 7.1.1: capability discovery and runtime ops are served at
+    ``/switchm/api/{version}/...``; the ``/switchm/api/public`` form 404s.
     """
-    return smartzone_api_base.replace("/wsg/api/public", "/switchm/api/public")
+    return f"{_controller_root(smartzone_api_base)}/switchm/api"
 
 
 def switch_api_bases(smartzone_api_base: str) -> list[str]:
     """API bases to try for switch-manager endpoints, in priority order.
 
-    Older SmartZone served switch management under ``/switchm/api/public``;
-    SmartZone 7.x folds it into the main ``/wsg/api/public`` surface (confirmed
-    against 7.1.1: the dedicated base 404s, the wsg base serves the same
-    ``/switch/...`` and ``/traffic/...`` ops). Try the dedicated base first for
-    back-compat, then the wsg base.
+    Primary: ``{root}/switchm/api`` (the real Switch Manager base). The legacy
+    ``/switchm/api/public`` form is kept as a backstop for older controllers.
     """
-    candidates = [switch_manager_base(smartzone_api_base), smartzone_api_base]
+    root = _controller_root(smartzone_api_base)
+    candidates = [f"{root}/switchm/api", f"{root}/switchm/api/public"]
     seen: set[str] = set()
     out: list[str] = []
     for base in candidates:

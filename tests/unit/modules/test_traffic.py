@@ -20,7 +20,7 @@ def _ctx():
 
 @responses.activate
 def test_traffic_fetch_returns_normalised_rows():
-    sw_base = "https://sz.example:8443/switchm/api/public"
+    sw_base = "https://sz.example:8443/switchm/api"
     responses.add(responses.POST, f"{sw_base}/v11_0/traffic/top/usage",
                   json=FIXTURE, status=200, match_querystring=False)
     out = traffic_mod.fetch(_ctx())
