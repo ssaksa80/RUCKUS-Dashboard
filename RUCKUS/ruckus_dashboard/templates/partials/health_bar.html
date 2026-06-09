@@ -1,0 +1,12 @@
+<div class="health-bar" data-health-bar hidden>
+  <a class="health-tag" href="/" title="DSO Overview">DSO</a>
+  {% set chips = [("aps","APs"),("clients","Clients"),("alarms","Alarms"),
+                  ("rogues","Rogues"),("switches","Switches"),("poe","PoE"),
+                  ("vlans","VLANs"),("zones","Zones")] %}
+  {% for slug, label in chips %}
+  <a class="health-chip" href="/m/{{ slug }}" data-health-chip="{{ slug }}">
+    <span class="hc-label">{{ label }}</span>
+    <span class="hc-value" data-health-value="{{ slug }}">…</span>
+  </a>
+  {% endfor %}
+</div>

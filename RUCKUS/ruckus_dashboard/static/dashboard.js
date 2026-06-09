@@ -362,6 +362,48 @@ function renderDrill(root, slug, entity, payload) {
   }
 }
 
+function pickSummaryNumber(s) {
+  if (!s) return undefined;
+  return s.total ?? s.count ?? s.switches ?? Object.values(s).find(x => typeof x === "number");
+}
+
+function applyHealthState(slug, status, summary) {
+  const v = document.querySelector(`[data-health-value="${slug}"]`);
+  const chip = document.querySelector(`[data-health-chip="${slug}"]`);
+  if (!v) return;
+  if (status === "done") {
+    const n = pickSummaryNumber(summary);
+    v.textContent = n === undefined ? "0" : formatKpiValue(n);
+    if (chip) {
+      if ((slug === "alarms" || slug === "rogues") && Number(n) > 0) chip.classList.add("danger");
+      else chip.classList.remove("danger");
+    }
+  } else if (status === "failed" || status === "timed_out") {
+    v.textContent = "!";
+  } else if (status === "disabled") {
+    v.textContent = "—";
+  }
+}
+
+function renderHealthBar() {
+  const bar = document.querySelector("[data-health-bar]");
+  if (!bar) return;
+  bar.hidden = false;
+  const load = () => fetch("/api/warmup/status", { credentials: "same-origin" })
+    .then(r => r.ok ? r.json() : null)
+    .then(p => { if (p) Object.values(p.states || {}).forEach(st => applyHealthState(st.slug, st.status, st.summary)); })
+    .catch(() => {});
+  load();
+  try {
+    const es = new EventSource("/api/warmup");
+    es.addEventListener("module-ready", (e) => {
+      try { const st = JSON.parse(e.data); applyHealthState(st.slug, st.status, st.summary); } catch {}
+    });
+    es.addEventListener("complete", () => es.close());
+    es.onerror = () => { es.close(); };
+  } catch { /* status load already populated the bar */ }
+}
+
 function renderTile(slug, value) {
   const el = document.querySelector(`[data-tile-value="${slug}"]`);
   if (el) el.textContent = value;
@@ -461,6 +503,9 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   const dso = document.getElementById("dso-toggle");
   if (dso) dso.addEventListener("click", () => document.body.classList.toggle("dso-mode"));
+
+  // Persistent DSO health bar (shell-level, present on every page).
+  renderHealthBar();
 
   // Overview page: warmup-driven tile loading
   if (document.querySelector("[data-warmup-strip]")) {
