@@ -4,29 +4,35 @@ from typing import Any
 
 from . import register
 from ._base import Column, FetcherContext, ModuleSpec, TabSpec
-from ..clients.base import _extract_items
-from ..clients.switchm import switch_manager_query
+from ..clients.switchm import fetch_switches
 
 POLL_SECONDS = 120
 ICON = "\U0001F5C2️"  # 🗂️
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    # SmartZone 7.x exposes switch groups at POST /group; fall back to the
-    # group model-config query if a build doesn't serve the bare list.
-    data = switch_manager_query(
-        ctx.connection, "group", ctx.config,
-        fallback_paths=("groupModelConfigs/query",),
-    )
-    rows = [r for r in _extract_items(data) if isinstance(r, dict)]
-    items = [_normalize(r) for r in rows]
+    # SmartZone 7.1.1 does not serve a POST /group switch-group list (404), but
+    # every switch row carries groupId/groupName — derive the groups from the
+    # switch inventory (the one switch endpoint that works on this build).
+    response = fetch_switches(ctx.connection, ctx.config) or {}
+    switches = response.get("switches") or []
+    groups: dict[str, dict[str, Any]] = {}
+    for sw in switches:
+        gid = str(sw.get("groupId") or "")
+        gname = sw.get("groupName") or gid or "Ungrouped"
+        g = groups.setdefault(gid, {
+            "id": gid or gname, "name": gname, "switch_count": 0,
+            "parent_id": sw.get("parentGroupId") or None,
+        })
+        g["switch_count"] += 1
+    items = list(groups.values())
     return {"items": items, "raw_count": len(items)}
 
 
 def summary(data: dict[str, Any]) -> dict[str, Any]:
     items = data.get("items", [])
     total_switches = sum(int(i.get("switch_count") or 0) for i in items)
-    root_groups = sum(1 for i in items if i.get("parent_id") is None)
+    root_groups = sum(1 for i in items if not i.get("parent_id"))
     return {"total": len(items), "total_switches": total_switches,
             "root_groups": root_groups}
 

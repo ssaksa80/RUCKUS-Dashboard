@@ -1,11 +1,9 @@
-import json, pathlib
 import responses
 from ruckus_dashboard.auth.session_store import ConnectionConfig
 from ruckus_dashboard.modules._base import FetcherContext
 from ruckus_dashboard.modules import ports as ports_mod
 from ruckus_dashboard.infra.capability_gate import CapabilityGate
 
-FIXTURE = json.loads(pathlib.Path("tests/fixtures/switchm/ports_summary.json").read_text())
 CFG = {"RUCKUS_TIMEOUT_SECONDS": 5, "RUCKUS_DEBUG_BYTES": 1000,
        "RUCKUS_PAGE_LIMIT": 500, "RUCKUS_HOST_ALLOWLIST": None}
 
@@ -19,30 +17,36 @@ def _ctx():
 
 
 @responses.activate
-def test_ports_fetch_returns_normalised_rows():
+def test_ports_per_switch_summary_from_switch_list():
+    # Derived from the switch inventory (no fabric-wide per-port list on 7.1.1).
     sw_base = "https://sz.example:8443/switchm/api"
-    responses.add(responses.POST, f"{sw_base}/v11_0/switch/ports/summary",
-                  json=FIXTURE, status=200, match_querystring=False)
+    responses.add(responses.POST, f"{sw_base}/v11_0/switch",
+                  json={"list": [
+                      {"id": "s1", "switchName": "SW-1", "ipAddress": "10.0.0.1",
+                       "model": "ICX7550-24",
+                       "portStatus": {"up": 24, "down": 25, "warning": 3, "total": 52},
+                       "poe": {"total": 740, "free": 500, "percent": 32.4}},
+                  ], "totalCount": 1, "hasMore": False},
+                  status=200, match_querystring=False)
     out = ports_mod.fetch(_ctx())
-    assert len(out["items"]) == 3
-    assert out["items"][0]["status"] == "up"
-    assert out["items"][2]["poe_on"] is True
-    assert out["items"][2]["errors"] == 5
+    assert len(out["items"]) == 1
+    row = out["items"][0]
+    assert row["switch"] == "SW-1"
+    assert row["ports_total"] == 52
+    assert row["ports_up"] == 24
+    assert row["poe_used_w"] == 240
 
 
-def test_ports_summary_counts_status_and_errors():
+def test_ports_summary_aggregates_port_counts():
     data = {"items": [
-        {"status": "up", "poe_on": False, "errors": 0},
-        {"status": "down", "poe_on": False, "errors": 0},
-        {"status": "up", "poe_on": True, "errors": 5},
+        {"ports_total": 52, "ports_up": 24, "ports_down": 25, "ports_warning": 3},
+        {"ports_total": 24, "ports_up": 10, "ports_down": 14, "ports_warning": 0},
     ]}
     s = ports_mod.summary(data)
-    assert s["total"] == 3
-    assert s["up"] == 2
-    assert s["down"] == 1
-    assert s["poe_on"] == 1
-    assert s["errors_total"] == 5
-    assert s["errors_ports"] == 1
+    assert s["switches"] == 2
+    assert s["ports_total"] == 76
+    assert s["ports_up"] == 34
+    assert s["ports_down"] == 39
 
 
 def test_ports_registered():

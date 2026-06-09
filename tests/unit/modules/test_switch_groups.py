@@ -1,11 +1,9 @@
-import json, pathlib
 import responses
 from ruckus_dashboard.auth.session_store import ConnectionConfig
 from ruckus_dashboard.modules._base import FetcherContext
 from ruckus_dashboard.modules import switch_groups as sg_mod
 from ruckus_dashboard.infra.capability_gate import CapabilityGate
 
-FIXTURE = json.loads(pathlib.Path("tests/fixtures/switchm/group_list.json").read_text())
 CFG = {"RUCKUS_TIMEOUT_SECONDS": 5, "RUCKUS_DEBUG_BYTES": 1000,
        "RUCKUS_PAGE_LIMIT": 500, "RUCKUS_HOST_ALLOWLIST": None}
 
@@ -19,14 +17,21 @@ def _ctx():
 
 
 @responses.activate
-def test_switch_groups_fetch_returns_normalised_rows():
+def test_switch_groups_derived_from_switch_list():
+    # SmartZone 7.1.1 has no POST /group; groups are derived from the switch
+    # inventory (each switch carries groupId/groupName).
     sw_base = "https://sz.example:8443/switchm/api"
-    responses.add(responses.POST, f"{sw_base}/v11_0/group",
-                  json=FIXTURE, status=200, match_querystring=False)
+    responses.add(responses.POST, f"{sw_base}/v11_0/switch",
+                  json={"list": [
+                      {"id": "a", "groupId": "g1", "groupName": "HQ-Switches"},
+                      {"id": "b", "groupId": "g1", "groupName": "HQ-Switches"},
+                      {"id": "c", "groupId": "g2", "groupName": "Branch"},
+                  ], "totalCount": 3, "hasMore": False},
+                  status=200, match_querystring=False)
     out = sg_mod.fetch(_ctx())
-    assert len(out["items"]) == 3
-    assert out["items"][0]["name"] == "HQ-Switches"
-    assert out["items"][0]["switch_count"] == 4
+    by_name = {g["name"]: g for g in out["items"]}
+    assert by_name["HQ-Switches"]["switch_count"] == 2
+    assert by_name["Branch"]["switch_count"] == 1
 
 
 def test_switch_groups_summary_counts_roots():

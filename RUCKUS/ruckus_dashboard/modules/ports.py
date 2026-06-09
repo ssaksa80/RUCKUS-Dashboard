@@ -1,35 +1,37 @@
-"""Switch Ports — port-level status and PoE telemetry module."""
+"""Switch Ports — per-switch port utilisation summary.
+
+SmartZone 7.1.1 does not serve a fabric-wide per-port list (``/switch/ports/
+summary`` and ``/switch/ports/details`` 404 on this build). Each switch row,
+however, carries a ``portStatus`` rollup (up/down/warning/total) plus a ``poe``
+budget — so this module presents one row per switch with its port utilisation,
+derived from the switch inventory (the reliable switch endpoint)."""
 from __future__ import annotations
 from typing import Any
 
 from . import register
 from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
-from ..clients.switchm import switch_manager_query
+from ..clients.switchm import fetch_switches
 
 POLL_SECONDS = 30
 ICON = "\U0001F517"  # 🔗
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
-    data = switch_manager_query(
-        ctx.connection, "switch/ports/summary", ctx.config,
-        fallback_paths=("switch/ports/details", "portSettings/query"),
-    )
-    rows = [r for r in ((data or {}).get("list") or []) if isinstance(r, dict)]
-    items = [_normalize(r) for r in rows]
+    response = fetch_switches(ctx.connection, ctx.config) or {}
+    switches = response.get("switches") or []
+    items = [_normalize(sw) for sw in switches]
     return {"items": items, "raw_count": len(items)}
 
 
 def summary(data: dict[str, Any]) -> dict[str, Any]:
     items = data.get("items", [])
-    up = sum(1 for i in items if i.get("status") == "up")
-    down = sum(1 for i in items if i.get("status") == "down")
-    poe_on = sum(1 for i in items if i.get("poe_on"))
-    errors_total = sum(int(i.get("errors") or 0) for i in items)
-    errors_ports = sum(1 for i in items if int(i.get("errors") or 0) > 0)
-    return {"total": len(items), "up": up, "down": down,
-            "poe_on": poe_on, "errors_total": errors_total,
-            "errors_ports": errors_ports}
+    return {
+        "switches": len(items),
+        "ports_total": sum(int(i.get("ports_total") or 0) for i in items),
+        "ports_up": sum(int(i.get("ports_up") or 0) for i in items),
+        "ports_down": sum(int(i.get("ports_down") or 0) for i in items),
+        "ports_warning": sum(int(i.get("ports_warning") or 0) for i in items),
+    }
 
 
 def fetch_drill(ctx: FetcherContext, entity_id: str) -> dict[str, Any]:
@@ -45,23 +47,22 @@ def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _normalize(row: dict) -> dict:
-    switch_id = row.get("switchId")
-    port_id = row.get("portId")
+    ps = row.get("portStatus") or {}
+    poe = row.get("poe") or {}
+    poe_total = int(poe.get("total") or 0)
+    poe_free = int(poe.get("free") or 0)
     return {
-        "id": f"{switch_id}:{port_id}",
-        "switch_id": switch_id,
-        "port_id": port_id,
-        "name": row.get("name"),
-        "status": str(row.get("status") or "").lower(),
-        "speed": int(row.get("speed") or 0),
-        "vlan": int(row.get("vlan") or 0),
-        "poe_class": row.get("poeClass") or "",
-        "poe_on": bool(row.get("poeEnabled")),
-        "rx_bps": int(row.get("rxBps") or 0),
-        "tx_bps": int(row.get("txBps") or 0),
-        "errors": int(row.get("errors") or 0),
-        "attached_mac": row.get("attachedMac") or "",
-        "lldp_neighbor": row.get("lldpNeighbor") or "",
+        "id": row.get("id") or row.get("macAddress"),
+        "switch": row.get("switchName") or row.get("name") or "-",
+        "ip": row.get("ipAddress") or row.get("ip"),
+        "model": row.get("model"),
+        "ports_total": int(ps.get("total") or row.get("ports") or 0),
+        "ports_up": int(ps.get("up") or 0),
+        "ports_down": int(ps.get("down") or 0),
+        "ports_warning": int(ps.get("warning") or 0),
+        "poe_total_w": poe_total,
+        "poe_used_w": max(0, poe_total - poe_free),
+        "poe_pct": float(poe.get("percent") or 0),
     }
 
 
@@ -76,23 +77,21 @@ register(ModuleSpec(
     ),
     summary_fn=summary,
     requires_platforms=("smartzone",),
-    requires_capabilities=(("POST", "/switch/ports/summary"),),
+    requires_capabilities=(("POST", "/switch"),),
     supports_views=("table",),
     warmup=True,
     merge=merge,
     columns=(
-        Column("Switch", "switch_id"),
-        Column("Port", "port_id"),
-        Column("Status", "status", "status"),
-        Column("Speed", "speed", "number"),
-        Column("VLAN", "vlan", "number"),
-        Column("PoE", "poe_class"),
-        Column("RX bps", "rx_bps", "bytes"),
-        Column("TX bps", "tx_bps", "bytes"),
-        Column("Errors", "errors", "number"),
-        Column("Neighbor", "lldp_neighbor"),
+        Column("Switch", "switch"),
+        Column("IP", "ip"),
+        Column("Model", "model"),
+        Column("Ports", "ports_total", "number"),
+        Column("Up", "ports_up", "number"),
+        Column("Down", "ports_down", "number"),
+        Column("Warning", "ports_warning", "number"),
+        Column("PoE %", "poe_pct", "number"),
     ),
     filters=(
-        Filter("status", "Status", "select"),
+        Filter("model", "Model", "select"),
     ),
 ))
