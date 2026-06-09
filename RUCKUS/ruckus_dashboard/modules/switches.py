@@ -144,17 +144,25 @@ def _normalize(row: dict) -> dict:
         status = "flagged"
     else:
         status = raw_status or "unknown"
+    port_status = row.get("portStatus") or {}
     return {
-        "id": row.get("id"),
-        "name": row.get("name"),
+        "id": row.get("id") or row.get("macAddress"),
+        "name": row.get("switchName") or row.get("name") or "-",
         "model": row.get("model"),
-        "ip": row.get("ip"),
+        "ip": row.get("ipAddress") or row.get("ip"),
         "status": status,
-        "stack": row.get("stackId"),
-        "fw": row.get("firmware"),
-        "uptime": row.get("uptime"),
-        "ports_online": row.get("portsOnline"),
-        "ports_total": row.get("portsTotal"),
+        # This build reports stacks via numOfUnits (stackId is null); show the
+        # managing group as the "stack/group" column value.
+        "stack": row.get("stackId") or row.get("groupName"),
+        "fw": row.get("firmwareVersion") or row.get("firmware"),
+        "uptime": row.get("upTime") or row.get("uptime"),
+        "ports_online": port_status.get("up") if port_status else row.get("portsOnline"),
+        "ports_total": (port_status.get("total") if port_status else None)
+                        or row.get("ports") or row.get("portsTotal"),
+        "serial": row.get("serialNumber"),
+        "group": row.get("groupName"),
+        "units": row.get("numOfUnits"),
+        "mac": row.get("macAddress") or row.get("id"),
     }
 
 
@@ -171,7 +179,7 @@ register(ModuleSpec(
     ),
     summary_fn=summary,
     requires_platforms=("smartzone",),
-    requires_capabilities=(("POST", "/switch/view/details"),),
+    requires_capabilities=(("POST", "/switch"),),
     supports_views=("table",),
     warmup=True,
     merge=merge,
@@ -182,7 +190,7 @@ register(ModuleSpec(
         Column("Status", "status", "status"),
         Column("Stack", "stack"),
         Column("Firmware", "fw"),
-        Column("Uptime", "uptime", "uptime"),
+        Column("Uptime", "uptime"),
         Column("Ports Up", "ports_online", "number"),
         Column("Ports", "ports_total", "number"),
     ),

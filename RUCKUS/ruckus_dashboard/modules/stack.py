@@ -44,39 +44,54 @@ def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _group_by_stack(rows: list[dict]) -> list[dict]:
-    groups: dict[str, list[dict]] = {}
+    """Identify ICX stacks from the switch list.
+
+    SmartZone 7.1.1 reports a stacked unit as a single switch row with
+    ``numOfUnits > 1`` (and ``modules == "stack"``); ``stackId`` is null. Older
+    builds grouped explicit member rows by ``stackId`` with per-member
+    ``stackRole``. Support both: prefer explicit stackId grouping, otherwise
+    treat each multi-unit switch as one stack.
+    """
+    explicit: dict[str, list[dict]] = {}
     for row in rows:
-        stack_id = row.get("stackId")
-        if not stack_id:
-            continue
-        # Skip solo switches where stackId equals the switch id
-        if stack_id == row.get("id"):
-            continue
-        groups.setdefault(stack_id, []).append(row)
+        sid = row.get("stackId")
+        if sid and sid != row.get("id"):
+            explicit.setdefault(str(sid), []).append(row)
+
     items: list[dict] = []
-    for stack_id, members in groups.items():
-        master = next(
-            (m for m in members if str(m.get("stackRole") or "").lower() == "active"),
-            None,
-        )
-        standby = next(
-            (m for m in members if str(m.get("stackRole") or "").lower() == "standby"),
-            None,
-        )
-        firmwares = [m.get("firmware") for m in members]
-        fw_aligned = len(set(firmwares)) <= 1
-        ports_up = sum(int(m.get("stackPortsUp") or 0) for m in members)
-        ports_total = sum(int(m.get("stackPortsTotal") or 0) for m in members)
+    if explicit:
+        for stack_id, members in explicit.items():
+            master = next((m for m in members
+                           if str(m.get("stackRole") or "").lower() == "active"), None)
+            standby = next((m for m in members
+                            if str(m.get("stackRole") or "").lower() == "standby"), None)
+            firmwares = [m.get("firmwareVersion") or m.get("firmware") for m in members]
+            items.append({
+                "id": stack_id, "stack_id": stack_id, "members": len(members),
+                "master": master.get("id") if master else None,
+                "standby": standby.get("id") if standby else None,
+                "ports_up": sum(int(m.get("stackPortsUp") or 0) for m in members),
+                "ports_total": sum(int(m.get("stackPortsTotal") or 0) for m in members),
+                "fw_aligned": len(set(firmwares)) <= 1,
+                "firmware": firmwares[0] if firmwares else None,
+            })
+        return items
+
+    # Fallback: each multi-unit switch row is its own stack.
+    for row in rows:
+        units = int(row.get("numOfUnits") or 1)
+        if units <= 1 and str(row.get("modules") or "").lower() != "stack":
+            continue
+        port_status = row.get("portStatus") or {}
+        sid = row.get("id") or row.get("macAddress")
         items.append({
-            "id": stack_id,
-            "stack_id": stack_id,
-            "members": len(members),
-            "master": master.get("id") if master else None,
-            "standby": standby.get("id") if standby else None,
-            "ports_up": ports_up,
-            "ports_total": ports_total,
-            "fw_aligned": fw_aligned,
-            "firmware": firmwares[0] if firmwares else None,
+            "id": sid, "stack_id": sid, "name": row.get("switchName"),
+            "members": units, "master": sid, "standby": None,
+            "ports_up": port_status.get("up"),
+            "ports_total": port_status.get("total") or row.get("ports"),
+            "fw_aligned": True,
+            "firmware": row.get("firmwareVersion") or row.get("firmware"),
+            "group": row.get("groupName"),
         })
     return items
 
