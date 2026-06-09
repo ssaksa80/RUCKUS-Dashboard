@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% set active_slug = "topology" %}
+{% block title %}Topology{% endblock %}
+{% block breadcrumb %}Topology{% endblock %}
+{% block content %}
+<section class="topology" data-topology>
+  <div class="topo-toolbar">
+    <h1>Network Topology</h1>
+    <div class="topo-controls">
+      <button data-topo-zoom-in title="Zoom in">+</button>
+      <button data-topo-zoom-out title="Zoom out">−</button>
+      <button data-topo-fit title="Fit to view">⤢</button>
+    </div>
+  </div>
+  <div class="topo-canvas" data-topo-canvas><p class="empty">Loading topology…</p></div>
+  <div class="topo-legend" data-topo-legend></div>
+</section>
+<script src="{{ url_for('static', filename='topology.js') }}"></script>
+{% endblock %}

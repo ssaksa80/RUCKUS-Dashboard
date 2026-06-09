@@ -29,6 +29,11 @@ def module_page(slug: str):
         return render_template("overview.html",
                                modules=all_modules(),
                                csrf_token=session.get("csrf_token", ""))
+    if slug == "topology":
+        # Topology renders a graph, not a data table.
+        return render_template("topology.html",
+                               modules=all_modules(),
+                               csrf_token=session.get("csrf_token", ""))
     return render_template("module.html",
                            module=spec,
                            modules=all_modules(),

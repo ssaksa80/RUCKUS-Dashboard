@@ -1,0 +1,156 @@
+"""Topology — logical hierarchy map (controller → zones / switch-groups → switches).
+
+SmartZone's public API exposes only per-device neighbor data, so this builds a
+logical hierarchy from already-cached sources rather than physical L2 wiring."""
+from __future__ import annotations
+from typing import Any
+
+from . import register
+from ._base import FetcherContext, ModuleSpec
+from ..clients.smartzone import (
+    smartzone_get, smartzone_paged_get, smartzone_query_paged,
+)
+from ..clients.switchm import fetch_switches, switch_manager_query
+
+POLL_SECONDS = 60
+ICON = "\U0001F578"  # spider web (map-like)
+
+_ONLINE = {"online", "in_service", "connected", "run", "operational", "registered", "up"}
+_OFFLINE = {"offline", "disconnected", "down", "gone", "unregistered"}
+
+STATUS_COLORS = {"online": "#2ecc71", "flagged": "#f1c40f",
+                 "offline": "#e74c3c", "unknown": "#7c8aa0"}
+
+
+def _norm_status(raw: Any) -> str:
+    r = str(raw or "").lower()
+    if r in _ONLINE:
+        return "online"
+    if r in _OFFLINE:
+        return "offline"
+    if r in {"flagged", "warning", "degraded"}:
+        return "flagged"
+    return "unknown"
+
+
+def fetch(ctx: FetcherContext) -> dict[str, Any]:
+    cluster = _safe(lambda: smartzone_get(ctx.connection, "cluster/state", ctx.config, None, []))
+    zones = _safe(lambda: smartzone_paged_get(ctx.connection, "rkszones", ctx.config, debug=[])) or []
+    aps = _safe(lambda: smartzone_query_paged(ctx.connection, "query/ap", ctx.config, [])) or []
+    sw_resp = _safe(lambda: fetch_switches(ctx.connection, ctx.config)) or {}
+    switches = sw_resp.get("switches") or []
+    traffic_by_mac = _traffic_map(ctx)
+    return _build_graph(cluster, zones, aps, switches, traffic_by_mac)
+
+
+def _safe(fn):
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001 — each source is best-effort
+        return None
+
+
+def _traffic_map(ctx) -> dict:
+    out: dict = {}
+    data = _safe(lambda: switch_manager_query(ctx.connection, "traffic/top/usage", ctx.config)) or {}
+    for r in (data.get("list") or []):
+        if isinstance(r, dict):
+            key = r.get("key") or r.get("id")
+            if key:
+                out[str(key).upper()] = int(r.get("value") or 0)
+    return out
+
+
+def _build_graph(cluster, zones, aps, switches, traffic_by_mac):
+    cluster = cluster or {}
+    traffic_by_mac = traffic_by_mac or {}
+    nodes: list[dict] = []
+    edges: list[dict] = []
+
+    ctrl_status = "online" if str(cluster.get("clusterState") or "").lower() in _ONLINE else "unknown"
+    nodes.append({"id": "controller", "label": cluster.get("clusterName") or "Controller",
+                  "type": "controller", "status": ctrl_status, "meta": {}})
+
+    # Zones with aggregated AP counts.
+    ap_by_zone: dict[str, list[str]] = {}
+    for ap in aps or []:
+        zid = str(ap.get("zoneId") or "")
+        ap_by_zone.setdefault(zid, []).append(_norm_status(ap.get("status")))
+    for z in zones or []:
+        zid = str(z.get("id") or z.get("zoneId") or "")
+        node_id = zid or (z.get("name") or "zone")
+        statuses = ap_by_zone.get(zid, [])
+        total = len(statuses)
+        down = sum(1 for s in statuses if s == "offline")
+        zstatus = "online" if total == 0 or down == 0 else ("offline" if down == total else "flagged")
+        nodes.append({"id": node_id, "label": f"{z.get('name') or 'Zone'} ({total} APs)",
+                      "type": "zone", "status": zstatus,
+                      "meta": {"ap_total": total, "ap_down": down}})
+        edges.append({"source": "controller", "target": node_id, "status": zstatus, "label": ""})
+
+    # Switch groups/stacks + switch leaves.
+    groups: dict[str, dict] = {}
+    for sw in switches or []:
+        gid = str(sw.get("groupId") or sw.get("stackId") or "ungrouped")
+        gname = sw.get("groupName") or sw.get("stack") or "Switches"
+        groups.setdefault(gid, {"name": gname, "switches": []})
+        groups[gid]["switches"].append(sw)
+    for gid, g in groups.items():
+        child_statuses = [_norm_status(s.get("status")) for s in g["switches"]]
+        gstatus = "online"
+        if any(s == "offline" for s in child_statuses):
+            gstatus = "flagged"
+        if child_statuses and all(s == "offline" for s in child_statuses):
+            gstatus = "offline"
+        nodes.append({"id": gid, "label": f"{g['name']} ({len(g['switches'])})",
+                      "type": "group", "status": gstatus, "meta": {}})
+        edges.append({"source": "controller", "target": gid, "status": gstatus, "label": ""})
+        for sw in g["switches"]:
+            sid = sw.get("id") or sw.get("macAddress")
+            mac = str(sid).upper() if sid else ""
+            bytes_ = (traffic_by_mac.get(mac) or traffic_by_mac.get(str(sid))) if sid else None
+            nodes.append({"id": sid, "label": sw.get("switchName") or sw.get("name") or sid,
+                          "type": "switch", "status": _norm_status(sw.get("status")),
+                          "meta": {"traffic_bytes": bytes_}})
+            edges.append({"source": gid, "target": sid,
+                          "status": _norm_status(sw.get("status")),
+                          "label": _human_bytes(bytes_) if bytes_ else ""})
+
+    return {"nodes": nodes, "edges": edges,
+            "legend": {"status": STATUS_COLORS}, "items": []}
+
+
+def _human_bytes(n) -> str:
+    v = float(n or 0)
+    if v <= 0:
+        return ""
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if v < 1024:
+            return f"{v:.0f} {unit}" if unit == "B" else f"{v:.1f} {unit}"
+        v /= 1024
+    return f"{v:.1f} EB"
+
+
+def summary(data: dict[str, Any]) -> dict[str, Any]:
+    nodes = data.get("nodes", [])
+    return {"nodes": len(nodes),
+            "online": sum(1 for n in nodes if n.get("status") == "online"),
+            "offline": sum(1 for n in nodes if n.get("status") == "offline"),
+            "switches": sum(1 for n in nodes if n.get("type") == "switch")}
+
+
+def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
+    # Single controller; preserve the full graph (default merge keeps only items).
+    for r in results:
+        if r.get("nodes"):
+            return r
+    return {"nodes": [], "edges": [], "legend": {"status": STATUS_COLORS}, "items": []}
+
+
+register(ModuleSpec(
+    slug="topology", title="Topology", group="Cross-cutting", icon=ICON,
+    poll_seconds=POLL_SECONDS, fetcher=fetch, drill_fetcher=None, drill_tabs=(),
+    summary_fn=summary, requires_platforms=("smartzone",),
+    requires_capabilities=(("GET", "/cluster/state"),),
+    supports_views=("graph",), warmup=True, merge=merge,
+))

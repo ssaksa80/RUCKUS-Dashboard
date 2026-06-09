@@ -52,7 +52,7 @@ def test_dump_mode_writes_valid_json(tmp_path):
     assert data["controller"]["version"] == "7.1.1"
     # Every registered module must appear in the dump.
     assert set(data["modules"].keys()) == set(MODULES.keys())
-    assert len(data["modules"]) == 18
+    assert len(data["modules"]) == 19
 
 
 def test_dump_mode_missing_creds_returns_nonzero(tmp_path):

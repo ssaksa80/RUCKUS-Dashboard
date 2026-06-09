@@ -4,11 +4,11 @@ import ruckus_dashboard.modules._registry  # noqa: F401  registers stubs
 EXPECTED_SLUGS = {
     "overview", "zones", "aps", "wlans", "clients", "alarms", "rogues", "controller",
     "switches", "switch-groups", "ports", "traffic", "poe", "stack", "vlans",
-    "firmware", "security", "api-explorer",
+    "firmware", "security", "api-explorer", "topology",
 }
 
 
-def test_all_18_modules_registered():
+def test_all_modules_registered():
     slugs = {m.slug for m in all_modules()}
     assert slugs == EXPECTED_SLUGS
 
@@ -33,16 +33,15 @@ def test_all_other_modules_warmup_enabled():
     assert warmup_disabled == {"api-explorer"}
 
 
-def test_registry_has_18_modules_after_wireless_promoted():
+def test_registry_has_all_modules_with_real_fetchers():
     from ruckus_dashboard.modules import MODULES
-    assert len(MODULES) == 18
+    assert len(MODULES) == 19
     from ruckus_dashboard.modules._stub import stub_fetcher
-    # All 18 modules now have real fetchers (8 wireless + 7 switching + 3 cross-cutting)
+    # All modules have real fetchers (wireless + switching + cross-cutting + topology)
     real_slugs = ("overview","zones","aps","wlans","clients","alarms","rogues","controller",
                   "switches","switch-groups","ports","traffic","poe","stack","vlans",
-                  "firmware","security","api-explorer")
+                  "firmware","security","api-explorer","topology")
     for slug in real_slugs:
         assert MODULES[slug].fetcher is not stub_fetcher, f"{slug} still a stub"
-    # 0 stubs remain
     remaining_stubs = {slug for slug, m in MODULES.items() if m.fetcher is stub_fetcher}
     assert remaining_stubs == set()
