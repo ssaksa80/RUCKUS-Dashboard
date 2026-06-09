@@ -39,6 +39,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                       help="Connect, snapshot every module to JSON, then exit (no server).")
     dump.add_argument("--dump-file",
                       help="Output path (default ruckus-dump-<timestamp>.json).")
+    dump.add_argument("--probe-switchm", metavar="PATH",
+                      help="Diagnostic: POST this Switch Manager path (e.g. 'switch', "
+                           "'vlans/query', 'group', 'switch/ports/summary') with the "
+                           "standard query envelope and print the raw JSON response, "
+                           "then exit. Uses the same creds as --dump.")
     dump.add_argument("--platform", default="smartzone",
                       choices=["smartzone", "ruckus_one"],
                       help="RUCKUS platform to connect to (default smartzone).")
@@ -167,6 +172,37 @@ def _run_dump_mode(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_probe_mode(args: argparse.Namespace) -> int:
+    """Headless diagnostic: POST one Switch Manager path and print raw JSON."""
+    import pathlib
+    from .config import build_config
+    from .net.allowlist import HostAllowList
+    from .clients import authenticate_connection
+    from .clients.base import RuckusClientError
+    from .clients.switchm import switch_manager_query
+
+    config = build_config(str(pathlib.Path.cwd()))
+    config["RUCKUS_HOST_ALLOWLIST"] = HostAllowList(config.get("RUCKUS_ALLOWED_HOSTS", ""))
+    form = _dump_form(args)
+    try:
+        connection = authenticate_connection(form, config)
+    except (ValueError, RuckusClientError) as exc:
+        print(f"Connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    path = args.probe_switchm.lstrip("/")
+    try:
+        data = switch_manager_query(connection, path, config)
+    except RuckusClientError as exc:
+        print(f"Probe {path} failed: HTTP {exc.status_code}", file=sys.stderr)
+        if isinstance(exc.debug, dict) and exc.debug.get("raw"):
+            print(exc.debug["raw"], file=sys.stderr)
+        return 1
+    print(f"# Switch Manager POST /{path} — raw response (first 8000 chars):")
+    print(json.dumps(data, indent=2, default=str)[:8000])
+    return 0
+
+
 def _browser_host(host: str) -> str:
     return "localhost" if host in {"0.0.0.0", "::"} else host
 
@@ -181,6 +217,8 @@ def open_browser_once(url: str) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
+    if getattr(args, "probe_switchm", None):
+        sys.exit(_run_probe_mode(args))
     if args.dump:
         sys.exit(_run_dump_mode(args))
     overrides: dict[str, Any] = {}
