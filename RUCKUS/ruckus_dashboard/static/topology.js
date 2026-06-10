@@ -5,12 +5,15 @@ const TOPO_GLYPH = { controller: "🛰️", zone: "📶", group: "🗄️", stac
 const NODE_R = { controller: 30, group: 24, stack: 24, switch: 18, ap: 10, more: 12 };
 
 const topoState = {
-  nodes: [], edges: [],
+  nodes: [], edges: [],   // full graph (collapse filtering happens at render)
+  visEdges: [],           // edges actually rendered (collapse-filtered)
   positions: {},          // {id: {x, y}} — current layout
   saved: {},              // server-persisted positions
   pinned: new Set(),      // dragged this session — never relaid
   expanded: new Set(),    // zone ids fanned out
+  collapsed: new Set(),   // group ids with switches tucked away
   prev: {},               // {id: {status, alarms}} from previous poll
+  legend: null, root: null,
   vb: null, box: null,    // viewBox state
 };
 
@@ -89,6 +92,59 @@ function layoutGraph(nodes, edges, saved, pinned) {
     if (!moved) break;
   }
   return pos;
+}
+
+function refanChildren(parentId, positions, nodes, edges, controllerId) {
+  // Re-arrange a dropped parent's children in an arc facing away from the
+  // controller at the parent's new position, then push siblings ≥50 apart.
+  const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+  const kids = edges.filter(e => e.source === parentId && byId[e.target])
+                    .map(e => e.target);
+  const p = positions[parentId];
+  const c = positions[controllerId || "controller"] || { x: 0, y: 0 };
+  if (!p || !kids.length) return kids;
+  const away = Math.atan2(p.y - c.y, p.x - c.x);
+  const spread = Math.max(0.5, Math.min(2.2, kids.length * 0.18));
+  const R = 180;
+  kids.forEach((id, i) => {
+    const off = kids.length > 1 ? (i / (kids.length - 1) - 0.5) * spread : 0;
+    const a = away + off;
+    positions[id] = { x: p.x + Math.cos(a) * R, y: p.y + Math.sin(a) * R };
+  });
+  for (let iter = 0; iter < 20; iter++) {
+    let moved = false;
+    for (let i = 0; i < kids.length; i++) {
+      for (let j = i + 1; j < kids.length; j++) {
+        const a = positions[kids[i]], b = positions[kids[j]];
+        let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+        if (d >= 50) continue;
+        if (d < 1e-3) { dx = 1; dy = 0; d = 1; }
+        const push = (50 - d) / 2, ux = dx / d, uy = dy / d;
+        a.x -= ux * push; a.y -= uy * push;
+        b.x += ux * push; b.y += uy * push;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return kids;
+}
+
+function visibleGraph(nodes, edges, collapsed) {
+  if (!collapsed || !collapsed.size) return { nodes, edges };
+  const hidden = new Set();
+  edges.forEach(e => { if (collapsed.has(e.source)) hidden.add(e.target); });
+  return {
+    nodes: nodes.filter(n => !hidden.has(n.id)),
+    edges: edges.filter(e => !hidden.has(e.target) && !hidden.has(e.source)),
+  };
+}
+
+function rerenderFromState() {
+  if (!topoState.root) return;
+  renderTopology(topoState.root, {
+    data: { nodes: topoState.nodes, edges: topoState.edges, legend: topoState.legend },
+  });
 }
 
 function nodeHref(n) {
@@ -188,17 +244,23 @@ function renderTopology(root, payload) {
   topoState.prev = Object.fromEntries(nodes.map(n =>
     [n.id, { status: n.status, alarms: (n.meta && n.meta.alarm_count) || 0 }]));
   topoState.nodes = nodes; topoState.edges = edges;
-  topoState.positions = layoutGraph(nodes, edges, topoState.saved, topoState.pinned);
+  topoState.legend = data.legend; topoState.root = root;
+
+  // Collapse filter: full graph stays in state (toast diffing above), only
+  // visible nodes are laid out and drawn.
+  const vis = visibleGraph(nodes, edges, topoState.collapsed);
+  topoState.visEdges = vis.edges;
+  topoState.positions = layoutGraph(vis.nodes, vis.edges, topoState.saved, topoState.pinned);
   const pos = topoState.positions;
 
-  const xs = nodes.map(n => (pos[n.id] || {}).x || 0);
-  const ys = nodes.map(n => (pos[n.id] || {}).y || 0);
+  const xs = vis.nodes.map(n => (pos[n.id] || {}).x || 0);
+  const ys = vis.nodes.map(n => (pos[n.id] || {}).y || 0);
   const minX = Math.min(...xs) - 160, minY = Math.min(...ys) - 100;
   const w = (Math.max(...xs) - minX) + 280, h = (Math.max(...ys) - minY) + 200;
   topoState.box = { minX, minY, w, h };
   if (!topoState.vb) topoState.vb = { ...topoState.box };
 
-  const edgeSvg = edges.map((e, i) => {
+  const edgeSvg = vis.edges.map((e, i) => {
     const a = pos[e.source], b = pos[e.target];
     if (!a || !b) return "";
     const col = TOPO_COLORS[e.status] || TOPO_COLORS.unknown;
@@ -209,13 +271,14 @@ function renderTopology(root, payload) {
            `d="${edgePath(a, b)}" fill="none" stroke="${col}" stroke-width="${wpx}" stroke-opacity=".75"/>${lbl}`;
   }).join("");
 
-  const nodeSvg = nodes.map((n, i) => {
+  const nodeSvg = vis.nodes.map((n, i) => {
     const p = pos[n.id]; if (!p) return "";
     const col = TOPO_COLORS[n.status] || TOPO_COLORS.unknown;
     const g = TOPO_GLYPH[n.type] || "•";
     const r = nodeRadius(n);
     const alarms = (n.meta && n.meta.alarm_count) || 0;
-    const pulse = n.status === "offline" || alarms > 0 ? " pulse" : "";
+    const pulse = (n.status === "offline" || alarms > 0 ? " pulse" : "") +
+                  (topoState.collapsed.has(n.id) ? " collapsed" : "");
     const labelY = (i % 2 === 0) ? r + 16 : -(r + 8);
     const badge = alarms > 0
       ? `<circle class="topo-badge" cx="${r - 4}" cy="${-(r - 4)}" r="9"/>` +
@@ -256,7 +319,8 @@ function _updateNodeAndEdges(svg, id) {
   const p = topoState.positions[id];
   const g = svg.querySelector(`.topo-node[data-node="${CSS.escape(id)}"]`);
   if (g && p) g.setAttribute("transform", `translate(${p.x},${p.y})`);
-  topoState.edges.forEach((e, i) => {
+  // data-edge indices follow the rendered (collapse-filtered) edge order.
+  topoState.visEdges.forEach((e, i) => {
     if (e.source !== id && e.target !== id) return;
     const a = topoState.positions[e.source], b = topoState.positions[e.target];
     const path = svg.querySelector(`[data-edge="${i}"]`);
@@ -276,11 +340,25 @@ function _wireTopo(root, svg) {
   svg.addEventListener("wheel", e => { e.preventDefault(); zoom(e.deltaY > 0 ? 1.1 : 0.9); }, { passive: false });
 
   // Background pan vs node drag vs node click — one pointer state machine.
-  let drag = null; // {id|null, startX, startY, moved}
+  // Group/zone drags carry their children (subtree drag) and re-fan on drop.
+  let drag = null; // {id|null, x, y, moved, children:[{id,dx,dy}]}
+  const isParentType = t => t === "group" || t === "stack" || t === "zone";
   svg.addEventListener("pointerdown", e => {
     const nodeEl = e.target.closest(".topo-node");
-    drag = { id: nodeEl ? nodeEl.getAttribute("data-node") : null,
-             x: e.clientX, y: e.clientY, moved: false };
+    const id = nodeEl ? nodeEl.getAttribute("data-node") : null;
+    let children = [];
+    if (id) {
+      const n = topoState.nodes.find(x => x.id === id);
+      const p = topoState.positions[id];
+      if (n && p && isParentType(n.type)) {
+        children = topoState.visEdges
+          .filter(ed => ed.source === id && topoState.positions[ed.target])
+          .map(ed => ({ id: ed.target,
+                        dx: topoState.positions[ed.target].x - p.x,
+                        dy: topoState.positions[ed.target].y - p.y }));
+      }
+    }
+    drag = { id, x: e.clientX, y: e.clientY, moved: false, children };
     svg.setPointerCapture(e.pointerId);
   });
   svg.addEventListener("pointermove", e => {
@@ -293,6 +371,11 @@ function _wireTopo(root, svg) {
       topoState.positions[drag.id] = { x: world.x, y: world.y };
       topoState.pinned.add(drag.id);
       _updateNodeAndEdges(svg, drag.id);
+      // Children ride along with their original offsets.
+      drag.children.forEach(ch => {
+        topoState.positions[ch.id] = { x: world.x + ch.dx, y: world.y + ch.dy };
+        _updateNodeAndEdges(svg, ch.id);
+      });
     } else {
       const vb = topoState.vb;
       const rect = svg.getBoundingClientRect();
@@ -304,16 +387,33 @@ function _wireTopo(root, svg) {
   });
   const finish = e => {
     if (!drag) return;
-    const { id, moved } = drag;
+    const { id, moved, children } = drag;
     drag = null;
-    if (moved || !id) return;
-    // Click (no drag): switch/controller navigate, zone expands/collapses.
+    if (moved && id) {
+      if (children.length) {
+        // Re-fan the subtree at the new spot and pin it so polls keep it.
+        const kids = refanChildren(id, topoState.positions, topoState.nodes,
+                                   topoState.visEdges, "controller");
+        kids.forEach(k => topoState.pinned.add(k));
+        rerenderFromState();
+      }
+      return;
+    }
+    if (!id) return;
+    // Click (no drag): switch/controller navigate, zone expands via server,
+    // group/stack collapses locally.
     const n = topoState.nodes.find(x => x.id === id);
     if (!n) return;
     if (n.type === "zone") {
       if (topoState.expanded.has(id)) topoState.expanded.delete(id);
       else topoState.expanded.add(id);
       loadTopology(root);
+      return;
+    }
+    if (n.type === "group" || n.type === "stack") {
+      if (topoState.collapsed.has(id)) topoState.collapsed.delete(id);
+      else topoState.collapsed.add(id);
+      rerenderFromState();
       return;
     }
     const href = nodeHref(n);
@@ -327,11 +427,27 @@ function _wireTopo(root, svg) {
   if (tip) {
     svg.addEventListener("pointerover", e => {
       const nodeEl = e.target.closest(".topo-node");
-      if (!nodeEl) { tip.hidden = true; return; }
-      const n = topoState.nodes.find(x => x.id === nodeEl.getAttribute("data-node"));
-      if (!n) return;
-      tip.innerHTML = tooltipHtml(n);
-      tip.hidden = false;
+      if (nodeEl) {
+        const n = topoState.nodes.find(x => x.id === nodeEl.getAttribute("data-node"));
+        if (!n) return;
+        tip.innerHTML = tooltipHtml(n);
+        tip.hidden = false;
+        return;
+      }
+      const edgeEl = e.target.closest("path[data-edge]");
+      if (edgeEl) {
+        const edge = topoState.visEdges[Number(edgeEl.getAttribute("data-edge"))];
+        if (!edge) return;
+        const byId = Object.fromEntries(topoState.nodes.map(n => [n.id, n]));
+        const sl = (byId[edge.source] || {}).label || edge.source;
+        const tl = (byId[edge.target] || {}).label || edge.target;
+        tip.innerHTML = `<div class="tt-title">${_esc(sl)} ⇄ ${_esc(tl)}</div>` +
+                        `<div class="tt-row"><span>traffic</span><span>${_esc(edge.label || "—")}</span></div>` +
+                        `<div class="tt-row"><span>status</span><span>${_esc(edge.status || "unknown")}</span></div>`;
+        tip.hidden = false;
+        return;
+      }
+      tip.hidden = true;
     });
     svg.addEventListener("pointermove", e => {
       if (!tip.hidden) { tip.style.left = `${e.clientX + 14}px`; tip.style.top = `${e.clientY + 14}px`; }
@@ -386,6 +502,44 @@ function wireToolbar(root) {
       topoState.saved = {}; topoState.pinned.clear(); topoState.vb = null;
       loadTopology(root);
     });
+  });
+
+  const arrange = root.querySelector("[data-topo-arrange]");
+  if (arrange) arrange.addEventListener("click", () => {
+    // Fresh layout pass; saved/pinned anchors are respected (Reset clears them).
+    rerenderFromState();
+  });
+
+  const exportBtn = root.querySelector("[data-topo-export]");
+  if (exportBtn) exportBtn.addEventListener("click", () => {
+    try {
+      const svg = root.querySelector(".topo-svg");
+      const clone = svg.cloneNode(true);
+      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      const vb = svg.getAttribute("viewBox").split(" ").map(Number);
+      clone.setAttribute("width", vb[2]); clone.setAttribute("height", vb[3]);
+      const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+      style.textContent = ".topo-label{fill:#c7d3e0;font:12px Arial}" +
+        ".edge-label{fill:#7c8aa0;font:10px Arial}" +
+        ".topo-badge-text{fill:#fff;font:700 11px Arial}.topo-badge{fill:#e63946}";
+      const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      bg.setAttribute("x", vb[0]); bg.setAttribute("y", vb[1]);
+      bg.setAttribute("width", vb[2]); bg.setAttribute("height", vb[3]);
+      bg.setAttribute("fill", "#0a1422");
+      clone.insertBefore(bg, clone.firstChild);
+      clone.insertBefore(style, clone.firstChild);
+      const blob = new Blob([new XMLSerializer().serializeToString(clone)],
+                            { type: "image/svg+xml" });
+      const a = document.createElement("a");
+      const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+      a.href = URL.createObjectURL(blob);
+      a.download = `topology-${ts}.svg`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch {
+      exportBtn.textContent = "✗";
+      setTimeout(() => { exportBtn.textContent = "⬇"; }, 1500);
+    }
   });
 }
 

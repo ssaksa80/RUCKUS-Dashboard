@@ -199,3 +199,6 @@ body.dso-mode .health-bar{display:none}
   animation:toast-in .25s ease-out;box-shadow:0 6px 18px rgba(0,0,0,.5)}
 .topo-toast.warn{background:#3a2f0e;color:#ffe08a;border-color:#f1c40f}
 @keyframes toast-in{from{transform:translateX(40px);opacity:0}to{transform:none;opacity:1}}
+
+/* Topology v3: collapsed groups show a dashed ring */
+.topo-node.collapsed > circle{stroke-dasharray:6 4}
