@@ -55,3 +55,16 @@ def test_dashboard_js_contains_health_bar():
         for symbol in ["renderHealthBar", "applyHealthState", "pickSummaryNumber",
                        "data-health-value"]:
             assert symbol in body, f"missing symbol: {symbol}"
+
+
+def test_dashboard_js_escapes_table_output():
+    """formatCell/KPI strip/filters must HTML-escape controller-sourced strings
+    (a hostile SSID like <img onerror=...> must not execute)."""
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        assert "function _escape" in body
+        assert "_escape(value)" in body          # formatCell default branch
+        assert "_escape(formatKpiValue(v))" in body  # KPI strip
+        assert "&quot;" in body                  # attribute-context escaping

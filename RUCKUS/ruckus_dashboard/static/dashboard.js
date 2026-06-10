@@ -53,16 +53,18 @@ function formatKpiValue(v) {
 }
 
 function formatCell(value, kind) {
+  // Output is injected via innerHTML — every controller-sourced string (SSIDs,
+  // AP/switch names, alarm text) must be HTML-escaped or a hostile name is XSS.
   if (value === null || value === undefined || value === "") return "—";
   if (kind === "status") {
-    const v = String(value).toLowerCase();
-    return `<span class="status-pill status-${v}">${String(value)}</span>`;
+    const cls = String(value).toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    return `<span class="status-pill status-${cls}">${_escape(value)}</span>`;
   }
   if (kind === "bytes") return humanBytes(value);
   if (kind === "uptime") return humanUptime(value);
-  if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+  if (Array.isArray(value)) return value.length ? _escape(value.join(", ")) : "—";
+  if (typeof value === "object") return _escape(JSON.stringify(value));
+  return _escape(value);
 }
 
 function startModulePoller(slug, pollSeconds, entityId) {
@@ -117,11 +119,14 @@ function renderModule(slug, payload) {
 
   const strip = root.querySelector("[data-kpi-strip]");
   if (strip && payload.summary) {
+    // formatKpiValue is also used with textContent elsewhere, so it returns raw
+    // text; escape here where the result goes through innerHTML (summary values
+    // like top_switch carry controller-sourced names).
     strip.innerHTML = Object.entries(payload.summary)
       .map(([k, v]) => {
         const label = k.replace(/_/g, " ");
-        return `<div class="kpi-card neutral"><span class="kpi-label">${label}</span>` +
-               `<span class="kpi-value" aria-live="polite">${formatKpiValue(v)}</span></div>`;
+        return `<div class="kpi-card neutral"><span class="kpi-label">${_escape(label)}</span>` +
+               `<span class="kpi-value" aria-live="polite">${_escape(formatKpiValue(v))}</span></div>`;
       })
       .join("");
   }
@@ -129,7 +134,7 @@ function renderModule(slug, payload) {
   if (payload.data && payload.data.disabled) {
     root.querySelector("[data-data-area]").innerHTML =
       `<div class="error-banner">Module disabled — controller missing required ops: ` +
-      `${(payload.data.missing_capabilities || []).map(c => c.join(" ")).join(", ")}</div>`;
+      `${_escape((payload.data.missing_capabilities || []).map(c => c.join(" ")).join(", "))}</div>`;
     return;
   }
 
@@ -182,7 +187,7 @@ function renderColumns(root, slug, spec, items) {
   // Rows are only clickable when the module actually has a drill-in page;
   // otherwise navigating produces a 404 (e.g. controller has no drill_fetcher).
   const drillable = !!spec.has_drill;
-  const head = cols.map(c => `<th>${c.label}</th>`).join("");
+  const head = cols.map(c => `<th>${_escape(c.label)}</th>`).join("");
   const body = rows.slice(0, 2000).map(row => {
     const id = row.id != null ? encodeURIComponent(row.id) : "";
     const href = (drillable && id) ? `/m/${encodeURIComponent(slug)}/${id}` : "";
@@ -207,13 +212,15 @@ function renderFilters(root, slug, spec, items) {
 
   const parts = filters.map(f => {
     if (f.kind === "search") {
-      return `<input class="filter-control" type="search" placeholder="${f.label}…" ` +
+      return `<input class="filter-control" type="search" placeholder="${_escape(f.label)}…" ` +
              `data-filter-key="__search">`;
     }
+    // Option values come from controller data (SSIDs, zone names) — escape both
+    // the attribute and the display text.
     const values = Array.from(new Set(items.map(i => i[f.key]).filter(v => v != null && v !== "")))
-      .sort().map(v => `<option value="${String(v)}">${String(v)}</option>`).join("");
-    return `<label class="filter-control"><span>${f.label}</span>` +
-           `<select data-filter-key="${f.key}"><option value="">All</option>${values}</select></label>`;
+      .sort().map(v => `<option value="${_escape(v)}">${_escape(v)}</option>`).join("");
+    return `<label class="filter-control"><span>${_escape(f.label)}</span>` +
+           `<select data-filter-key="${_escape(f.key)}"><option value="">All</option>${values}</select></label>`;
   });
   host.innerHTML = parts.join("");
   host.dataset.built = slug;
@@ -231,7 +238,8 @@ function renderFilters(root, slug, spec, items) {
 
 function _escape(v) {
   return String(v ?? "")
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 // Key/value list for object-shaped sections (identity, health, raw object).
