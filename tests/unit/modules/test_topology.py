@@ -76,6 +76,35 @@ def test_topology_fetch_assembles_graph():
     assert any(n["type"] == "zone" for n in out["nodes"])
 
 
+def test_build_graph_meta_and_alarm_badges():
+    g = topology_mod._build_graph(
+        CLUSTER, ZONES, APS,
+        [{"id": "B0:7C:51:19:52:6C", "switchName": "AHDSP-CORE", "groupId": "g1",
+          "groupName": "Core", "status": "online", "ipAddress": "10.0.0.2",
+          "model": "ICX7550", "firmwareVersion": "GZR10010"}],
+        {"B0:7C:51:19:52:6C": 2048}, alarms_by_name={"ahdsp-core": 2})
+    sw = next(n for n in g["nodes"] if n["type"] == "switch")
+    assert sw["meta"]["ip"] == "10.0.0.2"
+    assert sw["meta"]["model"] == "ICX7550"
+    assert sw["meta"]["alarm_count"] == 2
+    assert sw["status"] == "flagged"   # online + alarms -> flagged
+
+
+def test_build_graph_zone_expansion_caps_and_orders():
+    aps = ([{"apMac": f"AA:{i:04X}", "deviceName": f"AP{i}", "zoneId": "z1",
+             "status": "Online"} for i in range(70)] +
+           [{"apMac": "BB:01", "deviceName": "AP-DOWN", "zoneId": "z1",
+             "status": "Offline"}])
+    g = topology_mod._build_graph(CLUSTER, ZONES, aps, [], {}, expand={"z1"})
+    ap_nodes = [n for n in g["nodes"] if n["type"] == "ap"]
+    assert len(ap_nodes) == 60
+    assert ap_nodes[0]["status"] == "offline"      # offline first
+    more = [n for n in g["nodes"] if n["type"] == "more"]
+    assert more and "+11 more" in more[0]["label"]
+    assert any(e["source"] == "z1" and e["target"] == ap_nodes[0]["id"]
+               for e in g["edges"])
+
+
 def test_topology_registered():
     from ruckus_dashboard.modules import MODULES
     assert MODULES["topology"].fetcher is topology_mod.fetch

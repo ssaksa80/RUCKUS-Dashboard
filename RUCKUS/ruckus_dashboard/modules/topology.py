@@ -40,7 +40,39 @@ def fetch(ctx: FetcherContext) -> dict[str, Any]:
     sw_resp = _safe(lambda: fetch_switches(ctx.connection, ctx.config)) or {}
     switches = sw_resp.get("switches") or []
     traffic_by_mac = _traffic_map(ctx)
-    return _build_graph(cluster, zones, aps, switches, traffic_by_mac)
+    alarms_by_name = _alarm_counts(ctx)
+    expand_raw = str((ctx.filters or {}).get("expand") or "")
+    expand = {z for z in (p.strip() for p in expand_raw.split(",")) if z}
+    return _build_graph(cluster, zones, aps, switches, traffic_by_mac,
+                        alarms_by_name=alarms_by_name, expand=expand)
+
+
+def _alarm_counts(ctx) -> dict[str, int]:
+    """Active alarm counts keyed by lowercase source name. Best-effort."""
+    try:
+        from ..clients.smartzone import smartzone_post, smartzone_query_body
+        resp = smartzone_post(ctx.connection, "alert/alarm/list", ctx.config,
+                              smartzone_query_body(None), []) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    counts: dict[str, int] = {}
+    for row in resp.get("list") or []:
+        src = str(row.get("sourceName") or "").strip().lower()
+        if src:
+            counts[src] = counts.get(src, 0) + int(row.get("alarmCount") or 1)
+    return counts
+
+
+def _alarms_for(alarms_by_name: dict[str, int], *names) -> int:
+    """Match a node to alarm sources by exact or substring name (both ways)."""
+    total = 0
+    for src, count in alarms_by_name.items():
+        for name in names:
+            n = str(name or "").strip().lower()
+            if n and (n == src or n in src or src in n):
+                total += count
+                break
+    return total
 
 
 def _safe(fn):
@@ -61,32 +93,64 @@ def _traffic_map(ctx) -> dict:
     return out
 
 
-def _build_graph(cluster, zones, aps, switches, traffic_by_mac):
+def _build_graph(cluster, zones, aps, switches, traffic_by_mac,
+                 alarms_by_name=None, expand=frozenset()):
     cluster = cluster or {}
     traffic_by_mac = traffic_by_mac or {}
+    alarms_by_name = alarms_by_name or {}
+    expand = set(expand or ())
     nodes: list[dict] = []
     edges: list[dict] = []
 
+    def _escalate(status: str, alarm_count: int) -> str:
+        return "flagged" if alarm_count and status == "online" else status
+
     ctrl_status = "online" if str(cluster.get("clusterState") or "").lower() in _ONLINE else "unknown"
     nodes.append({"id": "controller", "label": cluster.get("clusterName") or "Controller",
-                  "type": "controller", "status": ctrl_status, "meta": {}})
+                  "type": "controller", "status": ctrl_status,
+                  "meta": {"cluster_state": cluster.get("clusterState")}})
 
-    # Zones with aggregated AP counts.
-    ap_by_zone: dict[str, list[str]] = {}
+    # Zones with aggregated AP counts (raw rows kept for expansion).
+    ap_rows_by_zone: dict[str, list[dict]] = {}
     for ap in aps or []:
         zid = str(ap.get("zoneId") or "")
-        ap_by_zone.setdefault(zid, []).append(_norm_status(ap.get("status")))
+        ap_rows_by_zone.setdefault(zid, []).append(ap)
     for z in zones or []:
         zid = str(z.get("id") or z.get("zoneId") or "")
         node_id = zid or (z.get("name") or "zone")
-        statuses = ap_by_zone.get(zid, [])
+        rows = ap_rows_by_zone.get(zid, [])
+        statuses = [_norm_status(r.get("status")) for r in rows]
         total = len(statuses)
         down = sum(1 for s in statuses if s == "offline")
         zstatus = "online" if total == 0 or down == 0 else ("offline" if down == total else "flagged")
+        alarm_count = _alarms_for(alarms_by_name, z.get("name"))
         nodes.append({"id": node_id, "label": f"{z.get('name') or 'Zone'} ({total} APs)",
-                      "type": "zone", "status": zstatus,
-                      "meta": {"ap_total": total, "ap_down": down}})
+                      "type": "zone", "status": _escalate(zstatus, alarm_count),
+                      "meta": {"ap_total": total, "ap_down": down,
+                               "alarm_count": alarm_count}})
         edges.append({"source": "controller", "target": node_id, "status": zstatus, "label": ""})
+
+        if node_id in expand and rows:
+            # Offline APs first so problems are always within the cap.
+            ordered = sorted(rows, key=lambda r: _norm_status(r.get("status")) != "offline")
+            shown, extra = ordered[:60], len(ordered) - min(len(ordered), 60)
+            for ap in shown:
+                mac = ap.get("apMac") or ap.get("mac")
+                astatus = _norm_status(ap.get("status"))
+                a_alarms = _alarms_for(alarms_by_name, ap.get("deviceName"), mac)
+                nodes.append({"id": mac, "label": ap.get("deviceName") or mac,
+                              "type": "ap", "status": _escalate(astatus, a_alarms),
+                              "meta": {"model": ap.get("model"),
+                                       "ip": ap.get("ip") or ap.get("ipAddress"),
+                                       "alarm_count": a_alarms}})
+                edges.append({"source": node_id, "target": mac,
+                              "status": astatus, "label": ""})
+            if extra > 0:
+                more_id = f"{node_id}-more"
+                nodes.append({"id": more_id, "label": f"+{extra} more APs",
+                              "type": "more", "status": "unknown", "meta": {}})
+                edges.append({"source": node_id, "target": more_id,
+                              "status": "unknown", "label": ""})
 
     # Switch groups/stacks + switch leaves.
     groups: dict[str, dict] = {}
@@ -109,11 +173,18 @@ def _build_graph(cluster, zones, aps, switches, traffic_by_mac):
             sid = sw.get("id") or sw.get("macAddress")
             mac = str(sid).upper() if sid else ""
             bytes_ = (traffic_by_mac.get(mac) or traffic_by_mac.get(str(sid))) if sid else None
-            nodes.append({"id": sid, "label": sw.get("switchName") or sw.get("name") or sid,
-                          "type": "switch", "status": _norm_status(sw.get("status")),
-                          "meta": {"traffic_bytes": bytes_}})
+            name = sw.get("switchName") or sw.get("name") or sid
+            sstatus = _norm_status(sw.get("status"))
+            alarm_count = _alarms_for(alarms_by_name, name, sid)
+            nodes.append({"id": sid, "label": name,
+                          "type": "switch", "status": _escalate(sstatus, alarm_count),
+                          "meta": {"ip": sw.get("ipAddress"),
+                                   "model": sw.get("model"),
+                                   "fw": sw.get("firmwareVersion"),
+                                   "traffic_bytes": bytes_,
+                                   "alarm_count": alarm_count}})
             edges.append({"source": gid, "target": sid,
-                          "status": _norm_status(sw.get("status")),
+                          "status": sstatus,
                           "label": _human_bytes(bytes_) if bytes_ else ""})
 
     return {"nodes": nodes, "edges": edges,
