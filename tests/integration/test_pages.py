@@ -94,3 +94,15 @@ def test_topology_route_renders_graph_container():
         assert r.status_code == 200
         assert b"data-topology" in r.data
         assert b"topology.js" in r.data
+
+
+def test_csp_header_present_and_strict():
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+    with app.test_client() as c:
+        r = c.get("/")
+        csp = r.headers.get("Content-Security-Policy", "")
+        assert "default-src 'self'" in csp
+        assert "script-src 'self'" in csp
+        assert "frame-ancestors 'none'" in csp
+        # No inline <script> blocks remain (CSP would block them silently).
+        assert b"<script>" not in r.data

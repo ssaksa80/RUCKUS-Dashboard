@@ -64,6 +64,15 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
         )
         response.headers.setdefault("Cache-Control", "no-store")
+        # 'unsafe-inline' covers style *attributes* only (legend swatches,
+        # warmup bar widths); scripts are restricted to same-origin files.
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "connect-src 'self'; frame-ancestors 'none'; "
+            "base-uri 'self'; form-action 'self'",
+        )
         return response
 
     @app.before_request
