@@ -68,3 +68,12 @@ def test_dashboard_js_escapes_table_output():
         assert "_escape(value)" in body          # formatCell default branch
         assert "_escape(formatKpiValue(v))" in body  # KPI strip
         assert "&quot;" in body                  # attribute-context escaping
+
+
+def test_wall_mode_collapses_layout_grid():
+    """DSO wall mode hides the sidebar; the grid must collapse to one column or
+    .main lands in the leftover 240px sidebar track."""
+    import pathlib
+    css = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css").read_text(encoding="utf-8")
+    assert "body.dso-mode .layout" in css
+    assert "grid-template-columns: 1fr" in css

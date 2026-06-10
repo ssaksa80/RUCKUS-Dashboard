@@ -57,7 +57,12 @@ body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
 .status-partial { background: #3a2f0e; color: var(--watch); }
 .status-error { background: #2b1213; color: var(--critical); }
 body.dso-mode .sidebar, body.dso-mode .topbar { display: none; }
+/* Hiding the sidebar leaves its 240px grid track behind, squeezing .main into
+   the narrow first column — collapse the layout to one full-width column. */
+body.dso-mode .layout { grid-template-columns: 1fr; }
 body.dso-mode .kpi-value { font-size: 48px; }
+/* Topbar is gone in wall mode; give the topology canvas the freed height. */
+body.dso-mode .topology { height: calc(100vh - 110px); }
 
 /* Login + connect form */
 .login-body { background: var(--bg); color: var(--text); margin: 0;
