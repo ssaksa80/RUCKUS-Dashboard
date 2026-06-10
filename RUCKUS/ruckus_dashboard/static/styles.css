@@ -225,3 +225,17 @@ body.dso-mode .health-bar{display:none}
 .drill-section-title:first-child{margin-top:0}
 .drill-raw{background:var(--surface-muted);border:1px solid var(--border);border-radius:6px;
   padding:12px;font-size:12px;overflow:auto;max-height:60vh}
+
+/* ── Notifications & reports settings page ───────────────────────────── */
+.notifications .subtitle{color:var(--muted)}
+.notif-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+  gap:14px;margin:14px 0}
+.notif-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:16px;display:grid;gap:10px;align-content:start}
+.notif-card h3{margin:0 0 4px}
+.notif-card label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
+.notif-card input:not([type=checkbox]){background:var(--surface-muted);color:var(--text);
+  border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:14px}
+.notif-card .checkbox-label{display:flex;align-items:center;gap:8px}
+.notif-actions{display:flex;align-items:center;gap:12px}
+.notif-status{color:var(--muted);font-size:13px}

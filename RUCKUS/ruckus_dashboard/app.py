@@ -37,6 +37,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.config["RUCKUS_HOST_ALLOWLIST"] = HostAllowList(app.config.get("RUCKUS_ALLOWED_HOSTS", ""))
     app.module_cache = ModuleResultCache()
     app.warmup_scheduler = None
+
+    from .notify.scheduler import NotifyScheduler
+    app.notify_scheduler = NotifyScheduler(app.instance_path,
+                                           dict(app.config),
+                                           app.secrets_manager)
+    app.notify_scheduler.start()
     app.inflight = InFlightDeduper()
     # Capability discovery populates this set on connect; modules consult it
     # via CapabilityGate. Initialised empty so unauthenticated requests don't
@@ -56,6 +62,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.register_blueprint(warmup_bp)
     from .routes.topology_layout import bp as topology_layout_bp
     app.register_blueprint(topology_layout_bp)
+    from .routes.notifications import bp as notifications_bp
+    app.register_blueprint(notifications_bp)
 
     @app.after_request
     def security_headers(response):
