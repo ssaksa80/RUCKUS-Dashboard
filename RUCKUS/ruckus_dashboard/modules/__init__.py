@@ -37,3 +37,4 @@ from . import vlans  # noqa: F401,E402
 from . import firmware  # noqa: F401,E402
 from . import security  # noqa: F401,E402
 from . import api_explorer  # noqa: F401,E402
+from . import topology  # noqa: F401,E402

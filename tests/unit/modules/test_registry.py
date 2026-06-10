@@ -45,3 +45,19 @@ def test_registry_has_all_modules_with_real_fetchers():
         assert MODULES[slug].fetcher is not stub_fetcher, f"{slug} still a stub"
     remaining_stubs = {slug for slug, m in MODULES.items() if m.fetcher is stub_fetcher}
     assert remaining_stubs == set()
+
+
+def test_all_modules_registered_in_fresh_process():
+    """Guard against a module file existing but missing from the package's
+    import list — in-process tests mask that by importing modules directly."""
+    import os, subprocess, sys, pathlib
+    pkg_root = str(pathlib.Path("RUCKUS").resolve())
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "import ruckus_dashboard.modules as m; print(sorted(m.MODULES))"],
+        capture_output=True, text=True,
+        env={**os.environ, "PYTHONPATH": pkg_root},
+    )
+    assert out.returncode == 0, out.stderr
+    registered = set(eval(out.stdout.strip()))
+    assert registered == EXPECTED_SLUGS, f"missing: {EXPECTED_SLUGS - registered}"
