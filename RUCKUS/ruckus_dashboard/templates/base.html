@@ -37,6 +37,11 @@
         </ul>
       </div>
       {% endfor %}
+      <a href="/notifications" data-slug="notifications"
+         class="nav-item nav-pinned {% if active_slug == 'notifications' %}active{% endif %}">
+        <span class="nav-icon">🔔</span>
+        <span class="nav-label">Notifications</span>
+      </a>
     </nav>
   </aside>
   <main class="main">

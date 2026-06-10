@@ -83,6 +83,9 @@ def connect():
     current_app.warmup_scheduler = scheduler
     scheduler.run_in_thread()
 
+    if getattr(current_app, "notify_scheduler", None) is not None:
+        current_app.notify_scheduler.set_connection(connection)
+
     return redirect(url_for("pages.index"))
 
 
@@ -101,6 +104,8 @@ def logout():
     if getattr(current_app, "warmup_scheduler", None) is not None:
         current_app.warmup_scheduler.cancel()
         current_app.warmup_scheduler = None
+    if getattr(current_app, "notify_scheduler", None) is not None:
+        current_app.notify_scheduler.clear_connection()
 
     csrf_token = session.get("csrf_token", secrets.token_urlsafe(32))
     session.clear()

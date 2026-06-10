@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% set active_slug = "notifications" %}
+{% block title %}Notifications & Reports{% endblock %}
+{% block breadcrumb %}Notifications & Reports{% endblock %}
+{% block content %}
+<meta name="csrf-token" content="{{ csrf_token }}">
+<section class="notifications" data-notifications>
+  <h1>Notifications &amp; Reports</h1>
+  <p class="subtitle">Automated alert e-mails and the scheduled daily Excel report.</p>
+
+  <div class="notif-grid">
+    <div class="notif-card">
+      <h3>SMTP server</h3>
+      <label>Host <input data-nf="smtp.host" placeholder="smtp.example.com"></label>
+      <label>Port <input data-nf="smtp.port" type="number" value="587"></label>
+      <label class="checkbox-label"><input data-nf="smtp.use_tls" type="checkbox" checked> Use STARTTLS</label>
+      <label>Username <input data-nf="smtp.username"></label>
+      <label>Password <input data-nf="smtp.password" type="password" autocomplete="new-password"></label>
+      <label>From address <input data-nf="smtp.from_addr" placeholder="dso@company.com"></label>
+      <button class="button secondary" data-notif-test>Send test e-mail</button>
+      <span class="notif-status" data-test-status></span>
+    </div>
+
+    <div class="notif-card">
+      <h3>Automated alerts</h3>
+      <label class="checkbox-label"><input data-nf="alerts.enabled" type="checkbox"> Enable alert e-mails</label>
+      <label>Recipients (comma-separated) <input data-nf="alerts.recipients" placeholder="noc@company.com, ops@company.com"></label>
+      <label>Check interval (seconds) <input data-nf="alerts.check_seconds" type="number" value="300"></label>
+      <label>Offline threshold <input data-nf="alerts.offline_threshold" type="number" value="1"></label>
+      <label class="checkbox-label"><input data-nf="alerts.rules.ap_offline" type="checkbox" checked> AP offline</label>
+      <label class="checkbox-label"><input data-nf="alerts.rules.switch_offline" type="checkbox" checked> Switch offline</label>
+      <label class="checkbox-label"><input data-nf="alerts.rules.critical_alarm" type="checkbox" checked> Critical alarm</label>
+    </div>
+
+    <div class="notif-card">
+      <h3>Daily Excel report</h3>
+      <label class="checkbox-label"><input data-nf="report.enabled" type="checkbox"> E-mail report daily</label>
+      <label>Send at (HH:MM) <input data-nf="report.time" value="07:00"></label>
+      <label>Recipients (comma-separated) <input data-nf="report.recipients"></label>
+      <a class="button secondary" href="/api/reports/generate">Download report now</a>
+    </div>
+  </div>
+
+  <div class="notif-actions">
+    <button class="button primary" data-notif-save>Save configuration</button>
+    <span class="notif-status" data-save-status></span>
+  </div>
+</section>
+<script src="{{ url_for('static', filename='notifications.js') }}"></script>
+{% endblock %}
