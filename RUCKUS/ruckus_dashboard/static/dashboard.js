@@ -251,10 +251,26 @@ function renderKeyVals(container, obj) {
   const rows = Object.entries(obj).map(([k, v]) => {
     let val = v;
     if (v && typeof v === "object") val = JSON.stringify(v);
-    return `<div class="kv-row"><span class="kv-key">${_escape(k)}</span>` +
+    return `<div class="kv-row"><span class="kv-key">${_escape(_humanKey(k))}</span>` +
            `<span class="kv-val">${_escape(val)}</span></div>`;
   }).join("");
   container.innerHTML = `<div class="kv-list">${rows}</div>`;
+}
+
+function _humanKey(k) {
+  return String(k).replace(/_/g, " ");
+}
+
+function _kvListHtml(obj) {
+  const rows = Object.entries(obj || {})
+    .filter(([, v]) => v !== null && v !== undefined && v !== "")
+    .map(([k, v]) => {
+      let val = v;
+      if (v && typeof v === "object") val = JSON.stringify(v);
+      return `<div class="kv-row"><span class="kv-key">${_escape(_humanKey(k))}</span>` +
+             `<span class="kv-val">${_escape(val)}</span></div>`;
+    }).join("");
+  return `<div class="kv-list">${rows}</div>`;
 }
 
 // Simple table for array-of-objects sections (ports, etc.).
@@ -285,23 +301,42 @@ function _renderDrillSection(body, slug, tabSlug, payload) {
     body.innerHTML = `<pre class="drill-raw">${_escape(JSON.stringify(data, null, 2))}</pre>`;
     return;
   }
-  // Pick the section: prefer a key matching the tab slug, else items, else whole data.
+  if (tabSlug === "summary" && data && typeof data === "object" && !Array.isArray(data)) {
+    // Summary stacks every informative section: identity key/values first,
+    // then each other non-raw section (catalog/ports/health/…) with a heading.
+    const parts = [];
+    if (data.identity && typeof data.identity === "object") {
+      parts.push(_kvListHtml(data.identity));
+    }
+    Object.entries(data).forEach(([key, section]) => {
+      if (["identity", "raw", "error"].includes(key)) return;
+      if (Array.isArray(section) && section.length) {
+        const tmp = document.createElement("div");
+        renderGenericTable(tmp, section);
+        parts.push(`<div class="drill-section-title">${_escape(_humanKey(key))}</div>` + tmp.innerHTML);
+      } else if (section && typeof section === "object" && Object.keys(section).length) {
+        parts.push(`<div class="drill-section-title">${_escape(_humanKey(key))}</div>` + _kvListHtml(section));
+      }
+    });
+    if (data.error) parts.push(`<div class="error-banner">${_escape(data.error)}</div>`);
+    body.innerHTML = parts.length ? parts.join("") : `<p class="empty">No data.</p>`;
+    return;
+  }
+  // Named tab: prefer a key matching the tab slug, else items, else whole data.
   let section = data;
   if (data && typeof data === "object" && !Array.isArray(data)) {
     if (Array.isArray(data[tabSlug]) || (data[tabSlug] && typeof data[tabSlug] === "object")) {
       section = data[tabSlug];
     } else if (Array.isArray(data.items)) {
       section = data.items;
-    } else if (tabSlug === "summary" && data.identity) {
-      section = data.identity;
     }
   }
   if (Array.isArray(section)) {
     renderGenericTable(body, section);
-  } else if (section && typeof section === "object") {
+  } else if (section && typeof section === "object" && Object.keys(section).length) {
     renderKeyVals(body, section);
   } else {
-    body.innerHTML = `<p class="empty">No data.</p>`;
+    body.innerHTML = `<p class="empty">No data for this tab.</p>`;
   }
 }
 
@@ -333,44 +368,52 @@ function renderDrill(root, slug, entity, payload) {
 
   // Build hero + tab bar once.
   if (root.dataset.drillBuilt !== entity) {
-    const heroRows = Object.entries(identity).map(([k, v]) => {
-      let val = v;
-      if (v && typeof v === "object") val = JSON.stringify(v);
-      return `<div class="kv-row"><span class="kv-key">${_escape(k)}</span>` +
-             `<span class="kv-val">${_escape(val)}</span></div>`;
-    }).join("");
+    // Hero stays minimal (status + id); the Summary tab carries the full detail.
+    const heroBits = [];
+    if (identity.status) heroBits.push(formatCell(identity.status, "status"));
+    if (identity.id && identity.id !== title) heroBits.push(`<span class="kv-key">${_escape(identity.id)}</span>`);
     const tabBar = tabs.map((t, i) =>
       `<button class="drill-tab${i === 0 ? " active" : ""}" ` +
       `data-drill-tab="${_escape(t.slug)}">${_escape(t.title)}</button>`).join("");
     area.innerHTML =
-      `<div class="drill-hero"><h2>${_escape(title)}</h2>` +
-      `<div class="kv-list">${heroRows}</div></div>` +
+      `<div class="drill-hero"><h2>${_escape(title)}</h2>${heroBits.join(" ")}</div>` +
       `<div class="drill-tabbar">${tabBar}</div>` +
       `<div class="drill-body" data-drill-body><p class="loading">Loading…</p></div>`;
     root.dataset.drillBuilt = entity;
 
     const body = area.querySelector("[data-drill-body]");
-    const loadTab = (tabSlug) => {
+    // The drill payload already contains every section — render tabs from it
+    // instantly; only hit the per-tab endpoint when the section is missing.
+    let lastPayload = payload;
+    const showTab = (tabSlug) => {
+      const data = (lastPayload && lastPayload.data) || {};
+      const hasSection = tabSlug === "summary" || tabSlug === "raw" ||
+        data[tabSlug] !== undefined;
+      if (hasSection) { _renderDrillSection(body, slug, tabSlug, lastPayload); return; }
+      body.innerHTML = `<p class="loading">Loading…</p>`;
       const url = `/api/modules/${encodeURIComponent(slug)}/` +
                   `${encodeURIComponent(entity)}/${encodeURIComponent(tabSlug)}`;
       fetch(url, { credentials: "same-origin" })
         .then(r => r.ok ? r.json() : null)
         .then(p => {
           if (!p) { body.innerHTML = `<p class="empty">No data.</p>`; return; }
+          lastPayload = p;
           _renderDrillSection(body, slug, tabSlug, p);
         })
         .catch(() => { body.innerHTML = `<p class="empty">No data.</p>`; });
     };
+    root._drillUpdatePayload = (p) => { lastPayload = p; };
     area.querySelectorAll("[data-drill-tab]").forEach(btn => {
       btn.addEventListener("click", () => {
         area.querySelectorAll("[data-drill-tab]").forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
-        loadTab(btn.dataset.drillTab);
+        showTab(btn.dataset.drillTab);
       });
     });
-    // Default active tab: first. Render its section from the current payload
-    // when possible (the drill_fetcher payload already contains every section).
     _renderDrillSection(body, slug, tabs[0].slug, payload);
+  } else if (root._drillUpdatePayload) {
+    // Poll refresh: keep the cached payload current for instant tab switches.
+    root._drillUpdatePayload(payload);
   }
 }
 

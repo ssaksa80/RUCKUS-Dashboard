@@ -24,3 +24,12 @@ def test_topology_css_has_pulse_and_toast():
     for rule in ["@keyframes topo-pulse", ".topo-toast", ".topo-tooltip",
                  ".topo-badge", ".topo-node.dimmed", "stroke-dasharray"]:
         assert rule in css, f"missing {rule}"
+
+
+def test_topology_js_animated_arrange_reset():
+    import pathlib
+    js = pathlib.Path("RUCKUS/ruckus_dashboard/static/topology.js").read_text(encoding="utf-8")
+    assert "animateToPositions" in js
+    assert "requestAnimationFrame" in js
+    # Reset must not refetch from the controller (instant local relayout).
+    assert "freshLayout" in js

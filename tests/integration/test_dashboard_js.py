@@ -77,3 +77,21 @@ def test_wall_mode_collapses_layout_grid():
     css = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css").read_text(encoding="utf-8")
     assert "body.dso-mode .layout" in css
     assert "grid-template-columns: 1fr" in css
+
+
+def test_drill_renders_from_cached_payload_and_stacks_summary():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        for sym in ["_kvListHtml", "_humanKey", "drill-section-title",
+                    "showTab", "_drillUpdatePayload"]:
+            assert sym in body, f"missing {sym}"
+
+
+def test_drill_css_present():
+    import pathlib
+    css = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css").read_text(encoding="utf-8")
+    for rule in [".drill-hero", ".drill-tab.active", ".kv-row", ".kv-key",
+                 ".drill-section-title", ".drill-raw"]:
+        assert rule in css, f"missing {rule}"

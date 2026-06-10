@@ -202,3 +202,26 @@ body.dso-mode .health-bar{display:none}
 
 /* Topology v3: collapsed groups show a dashed ring */
 .topo-node.collapsed > circle{stroke-dasharray:6 4}
+
+/* ── Drill pages: hero, tabs, key/value grid ──────────────────────────── */
+.drill-hero{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:16px 18px;margin-bottom:10px}
+.drill-hero h2{margin:0 0 8px;font-size:20px}
+.drill-tabbar{display:flex;gap:6px;margin:0 0 10px}
+.drill-tab{background:var(--surface);border:1px solid var(--border);color:var(--muted);
+  padding:7px 16px;border-radius:6px 6px 0 0;cursor:pointer;font-weight:700;font-size:13px}
+.drill-tab:hover{color:var(--text)}
+.drill-tab.active{background:var(--surface-soft);color:var(--text);border-bottom-color:var(--accent)}
+.drill-body{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:14px 18px;min-height:120px}
+.kv-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:4px 28px}
+.kv-row{display:flex;justify-content:space-between;gap:16px;padding:7px 4px;
+  border-bottom:1px solid var(--surface-soft);font-size:13px}
+.kv-key{color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.04em;
+  font-weight:700;white-space:nowrap}
+.kv-val{text-align:right;word-break:break-all}
+.drill-section-title{color:var(--muted);text-transform:uppercase;font-size:11px;
+  letter-spacing:.05em;font-weight:800;margin:16px 0 6px}
+.drill-section-title:first-child{margin-top:0}
+.drill-raw{background:var(--surface-muted);border:1px solid var(--border);border-radius:6px;
+  padding:12px;font-size:12px;overflow:auto;max-height:60vh}

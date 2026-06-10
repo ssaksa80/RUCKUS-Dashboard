@@ -140,6 +140,41 @@ function visibleGraph(nodes, edges, collapsed) {
   };
 }
 
+function animateToPositions(newPos, duration) {
+  // Smoothly tween rendered nodes/edges to a new layout (easeOutCubic).
+  const svg = topoState.root && topoState.root.querySelector(".topo-svg");
+  if (!svg) { topoState.positions = newPos; rerenderFromState(); return; }
+  duration = duration || 350;
+  const old = {};
+  Object.keys(newPos).forEach(id => {
+    old[id] = topoState.positions[id] || newPos[id];
+  });
+  const nodeEls = {};
+  svg.querySelectorAll(".topo-node").forEach(g => { nodeEls[g.getAttribute("data-node")] = g; });
+  const edgeEls = Array.from(svg.querySelectorAll("path[data-edge]"));
+  const start = performance.now();
+  const step = (t) => {
+    const k = Math.min(1, (t - start) / duration);
+    const e = 1 - Math.pow(1 - k, 3);
+    Object.keys(newPos).forEach(id => {
+      const o = old[id], n = newPos[id];
+      topoState.positions[id] = { x: o.x + (n.x - o.x) * e, y: o.y + (n.y - o.y) * e };
+      const g = nodeEls[id];
+      if (g) g.setAttribute("transform",
+        `translate(${topoState.positions[id].x},${topoState.positions[id].y})`);
+    });
+    edgeEls.forEach(p => {
+      const edge = topoState.visEdges[Number(p.getAttribute("data-edge"))];
+      if (!edge) return;
+      const a = topoState.positions[edge.source], b = topoState.positions[edge.target];
+      if (a && b) p.setAttribute("d", edgePath(a, b));
+    });
+    if (k < 1) requestAnimationFrame(step);
+    else topoState.positions = newPos;
+  };
+  requestAnimationFrame(step);
+}
+
 function rerenderFromState() {
   if (!topoState.root) return;
   renderTopology(topoState.root, {
@@ -493,21 +528,30 @@ function wireToolbar(root) {
     }).then(r => { save.textContent = r.ok ? "✓" : "✗"; setTimeout(() => { save.textContent = "💾"; }, 1500); });
   });
 
+  const freshLayout = () => {
+    const vis = visibleGraph(topoState.nodes, topoState.edges, topoState.collapsed);
+    return layoutGraph(vis.nodes, vis.edges, {}, new Set());
+  };
+
   const reset = root.querySelector("[data-topo-reset]");
   if (reset) reset.addEventListener("click", () => {
+    // Instant: relayout locally and animate; server delete runs in background
+    // (no controller refetch — the next poll refreshes data anyway).
+    topoState.saved = {}; topoState.pinned.clear();
+    animateToPositions(freshLayout());
     fetch("/api/topology/layout", {
       method: "DELETE", credentials: "same-origin",
       headers: { "X-CSRF-Token": _csrf() },
-    }).then(() => {
-      topoState.saved = {}; topoState.pinned.clear(); topoState.vb = null;
-      loadTopology(root);
-    });
+    }).catch(() => {});
   });
 
   const arrange = root.querySelector("[data-topo-arrange]");
   if (arrange) arrange.addEventListener("click", () => {
-    // Fresh layout pass; saved/pinned anchors are respected (Reset clears them).
-    rerenderFromState();
+    // Full clean auto-layout: drop session pins and in-memory saved anchors so
+    // it always actually rearranges; 💾 re-persists if you like the result.
+    topoState.pinned.clear();
+    topoState.saved = {};
+    animateToPositions(freshLayout());
   });
 
   const exportBtn = root.querySelector("[data-topo-export]");

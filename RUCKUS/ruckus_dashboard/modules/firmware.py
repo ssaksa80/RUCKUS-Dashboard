@@ -52,7 +52,22 @@ def summary(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def fetch_drill(ctx: FetcherContext, entity_id: str) -> dict[str, Any]:
-    return {"identity": {"id": entity_id}, "catalog": _fetch_catalog(ctx, entity_id)}
+    catalog = _fetch_catalog(ctx, entity_id)
+    identity: dict[str, Any] = {"id": entity_id}
+    try:
+        zone = smartzone_get(ctx.connection, f"rkszones/{quote(entity_id)}",
+                             ctx.config, None, []) or {}
+        if zone.get("name"):
+            identity["name"] = zone["name"]
+        if zone.get("version"):
+            identity["current_firmware"] = zone["version"]
+    except Exception:  # noqa: BLE001 — name is best-effort enrichment
+        pass
+    supported = [c.get("version") for c in catalog if c.get("supported")]
+    if supported:
+        identity["latest_supported"] = max(supported)
+        identity["supported_versions"] = len(supported)
+    return {"identity": identity, "catalog": catalog}
 
 
 def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
