@@ -3,10 +3,14 @@
 {% block title %}Topology{% endblock %}
 {% block breadcrumb %}Topology{% endblock %}
 {% block content %}
+<meta name="csrf-token" content="{{ csrf_token }}">
 <section class="topology" data-topology>
   <div class="topo-toolbar">
     <h1>Network Topology</h1>
     <div class="topo-controls">
+      <input class="topo-search" type="search" placeholder="Find device…" data-topo-search>
+      <button data-topo-save title="Save layout">💾</button>
+      <button data-topo-reset title="Reset layout">↺</button>
       <button data-topo-zoom-in title="Zoom in">+</button>
       <button data-topo-zoom-out title="Zoom out">−</button>
       <button data-topo-fit title="Fit to view">⤢</button>
@@ -14,6 +18,8 @@
   </div>
   <div class="topo-canvas" data-topo-canvas><p class="empty">Loading topology…</p></div>
   <div class="topo-legend" data-topo-legend></div>
+  <div class="topo-tooltip" data-topo-tooltip hidden></div>
+  <div class="topo-toasts" data-topo-toasts></div>
 </section>
 <script src="{{ url_for('static', filename='topology.js') }}"></script>
 {% endblock %}
