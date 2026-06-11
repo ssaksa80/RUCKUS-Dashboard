@@ -10,9 +10,11 @@ POLL_SECONDS = 30
 ICON = "\U0001F4CA"  # 📊
 
 
-# Previous poll's cumulative counters, kept in-process so each fetch can
-# derive a live rate (bits/s) from the byte delta.
-_PREV: dict[str, Any] = {"t": 0.0, "bytes": {}}
+# Per-switch counter baselines + last computed rates, kept in-process.
+# SmartZone refreshes the traffic aggregate only periodically, so each
+# baseline is held until the counter actually moves and the rate is averaged
+# over the real elapsed window (a 30s delta would almost always read 0).
+_PREV: dict[str, Any] = {"base": {}, "rate": {}}
 
 
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
@@ -25,20 +27,20 @@ def fetch(ctx: FetcherContext) -> dict[str, Any]:
     items = [_normalize(r, name_by_mac) for r in rows]
 
     now = _time.time()
-    elapsed = now - float(_PREV["t"] or 0)
-    new_bytes: dict[str, int] = {}
     for i in items:
         sid = str(i.get("id") or "")
         total = int(i.get("total_bytes") or 0)
-        new_bytes[sid] = total
-        prev = _PREV["bytes"].get(sid)
-        if prev is not None and 5 <= elapsed and total >= prev:
-            i["rate_bps"] = round((total - prev) * 8 / elapsed)
-        else:
-            i["rate_bps"] = None
-    if elapsed >= 5 or not _PREV["t"]:
-        _PREV["t"] = now
-        _PREV["bytes"] = new_bytes
+        base = _PREV["base"].get(sid)
+        if base is None or total < base["bytes"]:
+            # First sighting or counter reset — start the baseline.
+            _PREV["base"][sid] = {"bytes": total, "t": now}
+            _PREV["rate"].pop(sid, None) if base is None else None
+        elif total > base["bytes"] and now - base["t"] >= 5:
+            _PREV["rate"][sid] = round((total - base["bytes"]) * 8
+                                       / (now - base["t"]))
+            _PREV["base"][sid] = {"bytes": total, "t": now}
+        # unchanged counter → keep the last computed rate
+        i["rate_bps"] = _PREV["rate"].get(sid)
     return {"items": items, "raw_count": len(items), "raw_rows": rows[:2]}
 
 

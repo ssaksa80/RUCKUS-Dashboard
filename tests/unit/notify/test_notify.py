@@ -263,8 +263,8 @@ def test_traffic_live_rate_from_deltas(monkeypatch):
         capability_gate=CapabilityGate(set()), connection_label="SZ")
 
     sw = "https://sz.example:8443/switchm/api"
-    traffic_mod._PREV["t"] = 0.0
-    traffic_mod._PREV["bytes"] = {}
+    traffic_mod._PREV["base"] = {}
+    traffic_mod._PREV["rate"] = {}
 
     with resp.RequestsMock() as rs:
         rs.add(resp.POST, f"{sw}/v11_0/switch",
@@ -275,8 +275,8 @@ def test_traffic_live_rate_from_deltas(monkeypatch):
         out1 = traffic_mod.fetch(ctx)
     assert out1["items"][0]["rate_bps"] is None    # first sample
 
-    # Pretend the first poll happened 10 s ago.
-    traffic_mod._PREV["t"] = _t.time() - 10
+    # Pretend the baseline was taken 10 s ago.
+    traffic_mod._PREV["base"]["S1"]["t"] = _t.time() - 10
 
     with resp.RequestsMock() as rs:
         rs.add(resp.POST, f"{sw}/v11_0/switch",
@@ -287,3 +287,14 @@ def test_traffic_live_rate_from_deltas(monkeypatch):
         out2 = traffic_mod.fetch(ctx)
     rate = out2["items"][0]["rate_bps"]
     assert rate is not None and 7000 <= rate <= 9000   # ~8000 bps
+
+    # Third poll with an UNCHANGED counter keeps the last rate (the SmartZone
+    # aggregate refreshes periodically; a flat counter must not read 0 bps).
+    with resp.RequestsMock() as rs:
+        rs.add(resp.POST, f"{sw}/v11_0/switch",
+               json={"list": [{"id": "S1", "switchName": "SW-1"}],
+                     "totalCount": 1, "hasMore": False}, status=200)
+        rs.add(resp.POST, f"{sw}/v11_0/traffic/top/usage",
+               json={"list": [{"key": "S1", "value": 11000}]}, status=200)
+        out3 = traffic_mod.fetch(ctx)
+    assert out3["items"][0]["rate_bps"] == rate

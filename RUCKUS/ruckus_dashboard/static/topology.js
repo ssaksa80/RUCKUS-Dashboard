@@ -29,21 +29,29 @@ function fmtRate(bps) {
 }
 
 function updateRates(nodes) {
-  // Cumulative byte counters → live bps between polls (min 5 s apart so a
-  // local re-render doesn't divide by ~zero).
+  // Cumulative byte counters → bps. SmartZone refreshes the traffic aggregate
+  // only periodically, so the baseline is kept until the counter actually
+  // moves and the rate is averaged over the real elapsed window. An unchanged
+  // counter keeps the last computed rate instead of collapsing to 0.
   const now = Date.now() / 1000;
   nodes.forEach(n => {
     if (n.type !== "switch" || !n.meta || n.meta.traffic_bytes == null) return;
+    const bytes = Number(n.meta.traffic_bytes);
     const prev = topoState.prevTraffic[n.id];
-    if (prev) {
-      const dt = now - prev.t;
-      if (dt >= 5 && n.meta.traffic_bytes >= prev.bytes) {
-        topoState.rates[n.id] = ((n.meta.traffic_bytes - prev.bytes) * 8) / dt;
-        topoState.prevTraffic[n.id] = { bytes: n.meta.traffic_bytes, t: now };
-      }
-    } else {
-      topoState.prevTraffic[n.id] = { bytes: n.meta.traffic_bytes, t: now };
+    if (!prev) {
+      topoState.prevTraffic[n.id] = { bytes, t: now };
+      return;
     }
+    const dt = now - prev.t;
+    if (dt < 5) return;
+    if (bytes > prev.bytes) {
+      topoState.rates[n.id] = ((bytes - prev.bytes) * 8) / dt;
+      topoState.prevTraffic[n.id] = { bytes, t: now };
+    } else if (bytes < prev.bytes) {
+      // Counter reset (reboot) — restart the baseline.
+      topoState.prevTraffic[n.id] = { bytes, t: now };
+    }
+    // bytes unchanged → keep baseline + last rate until the counter ticks.
   });
 }
 
@@ -337,7 +345,9 @@ function renderTopology(root, payload) {
     let labelText = e.label;
     if ((byIdAll[e.target] || {}).type === "switch") {
       const bps = topoState.rates[e.target];
-      labelText = bps != null ? fmtRate(bps) : "";
+      // Only positive rates are worth ink on the map; idle/unmeasured links
+      // stay unlabeled (hover shows the detail).
+      labelText = bps > 0 ? fmtRate(bps) : "";
     }
     const wpx = edgeWidth(labelText, e.status);
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
@@ -517,8 +527,10 @@ function _wireTopo(root, svg) {
         const sl = (byId[edge.source] || {}).label || edge.source;
         const tl = (byId[edge.target] || {}).label || edge.target;
         const bps = topoState.rates[edge.target];
+        const rateText = bps > 0 ? fmtRate(bps)
+          : (bps === 0 ? "idle" : "measuring… (awaiting counter update)");
         tip.innerHTML = `<div class="tt-title">${_esc(sl)} ⇄ ${_esc(tl)}</div>` +
-                        `<div class="tt-row"><span>live rate</span><span>${_esc(bps != null ? fmtRate(bps) : "measuring…")}</span></div>` +
+                        `<div class="tt-row"><span>live rate</span><span>${_esc(rateText)}</span></div>` +
                         `<div class="tt-row"><span>total traffic</span><span>${_esc(edge.label || "—")}</span></div>` +
                         `<div class="tt-row"><span>status</span><span>${_esc(edge.status || "unknown")}</span></div>`;
         tip.hidden = false;
