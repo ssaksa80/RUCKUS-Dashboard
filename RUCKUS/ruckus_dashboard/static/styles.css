@@ -239,3 +239,16 @@ body.dso-mode .health-bar{display:none}
 .notif-card .checkbox-label{display:flex;align-items:center;gap:8px}
 .notif-actions{display:flex;align-items:center;gap:12px}
 .notif-status{color:var(--muted);font-size:13px}
+
+/* Grid view cards */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.item-card{background:var(--surface-soft);border:1px solid var(--border);border-radius:8px;
+  padding:12px;font-size:13px;display:grid;gap:6px}
+.item-card[data-href]{cursor:pointer}
+.item-card[data-href]:hover{border-color:var(--accent)}
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card-row{display:flex;justify-content:space-between;gap:10px}
+.card-row span:first-child{color:var(--muted);font-size:11px;text-transform:uppercase}
+.view-toggle button.active{background:var(--rail-active);color:#fff}
+.view-toggle button{background:var(--surface);border:1px solid var(--border);color:var(--muted);
+  border-radius:6px;padding:4px 12px;cursor:pointer;margin-right:4px}

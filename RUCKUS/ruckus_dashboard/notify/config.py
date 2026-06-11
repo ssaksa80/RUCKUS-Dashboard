@@ -16,7 +16,7 @@ DEFAULTS: dict[str, Any] = {
              "password_enc": "", "from_addr": ""},
     "alerts": {"enabled": False, "recipients": [], "check_seconds": 300,
                "rules": {"ap_offline": True, "switch_offline": True,
-                         "critical_alarm": True},
+                         "critical_alarm": True, "poor_client_ap": True},
                "offline_threshold": 1},
     "report": {"enabled": False, "recipients": [], "time": "07:00"},
 }

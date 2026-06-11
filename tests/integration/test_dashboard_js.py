@@ -95,3 +95,13 @@ def test_drill_css_present():
     for rule in [".drill-hero", ".drill-tab.active", ".kv-row", ".kv-key",
                  ".drill-section-title", ".drill-raw"]:
         assert rule in css, f"missing {rule}"
+
+
+def test_dashboard_js_has_view_switcher_and_grid():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        for sym in ["wireViewToggle", "renderGrid", "renderData", "activeViews",
+                    "card-grid"]:
+            assert sym in body, f"missing {sym}"

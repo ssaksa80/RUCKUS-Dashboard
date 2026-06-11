@@ -39,7 +39,7 @@ def collect_report_data(connection, config: dict) -> dict[str, Any]:
     return out
 
 
-def state_from_data(data: dict[str, Any]) -> dict[str, int]:
+def state_from_data(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "aps_offline": sum(1 for a in data.get("aps") or []
                            if a.get("status") == "offline"),
@@ -49,7 +49,28 @@ def state_from_data(data: dict[str, Any]) -> dict[str, int]:
         "critical_alarms": sum(int(a.get("count") or 1)
                                for a in data.get("alarms") or []
                                if a.get("severity") == "critical"),
+        "poor_aps": poor_quality_aps(data.get("clients") or []),
     }
+
+
+def poor_quality_aps(clients: list[dict], ratio: float = 0.8,
+                     min_clients: int = 3) -> list[str]:
+    """APs where ≥ratio of their connected clients report poor quality.
+
+    min_clients avoids flagging an AP because its single client is poor."""
+    by_ap: dict[str, list[str]] = {}
+    for c in clients:
+        ap = str(c.get("ap") or "")
+        if ap:
+            by_ap.setdefault(ap, []).append(str(c.get("quality") or ""))
+    flagged = []
+    for ap, qualities in by_ap.items():
+        if len(qualities) < min_clients:
+            continue
+        poor = sum(1 for q in qualities if q == "poor")
+        if poor / len(qualities) >= ratio:
+            flagged.append(f"{ap} ({poor}/{len(qualities)} poor)")
+    return sorted(flagged)
 
 
 class NotifyScheduler:

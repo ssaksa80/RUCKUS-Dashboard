@@ -106,3 +106,12 @@ def test_csp_header_present_and_strict():
         assert "frame-ancestors 'none'" in csp
         # No inline <script> blocks remain (CSP would block them silently).
         assert b"<script>" not in r.data
+
+
+def test_api_explorer_moved_to_topbar_button():
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+    with app.test_client() as c:
+        html = c.get("/m/aps").data.decode()
+        # No sidebar nav entry; topbar link opens a new tab instead.
+        assert 'data-slug="api-explorer"' not in html.split("topbar-actions")[0].split("</aside>")[0]
+        assert 'href="/m/api-explorer" target="_blank"' in html
