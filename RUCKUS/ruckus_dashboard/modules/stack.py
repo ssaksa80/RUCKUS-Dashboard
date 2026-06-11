@@ -66,8 +66,10 @@ def _group_by_stack(rows: list[dict]) -> list[dict]:
             standby = next((m for m in members
                             if str(m.get("stackRole") or "").lower() == "standby"), None)
             firmwares = [m.get("firmwareVersion") or m.get("firmware") for m in members]
+            master_name = (master or members[0]).get("switchName") if members else None
             items.append({
-                "id": stack_id, "stack_id": stack_id, "members": len(members),
+                "id": stack_id, "stack_id": stack_id, "name": master_name,
+                "members": len(members),
                 "master": master.get("id") if master else None,
                 "standby": standby.get("id") if standby else None,
                 "ports_up": sum(int(m.get("stackPortsUp") or 0) for m in members),
@@ -113,6 +115,7 @@ register(ModuleSpec(
     merge=merge,
     columns=(
         Column("Stack", "stack_id"),
+        Column("Hostname", "name"),
         Column("Members", "members", "number"),
         Column("Master", "master"),
         Column("Standby", "standby"),

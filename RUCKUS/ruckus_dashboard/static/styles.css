@@ -256,3 +256,13 @@ body.dso-mode .health-bar{display:none}
 /* Clickable KPI cards (one-click filters) */
 .kpi-card.clickable{cursor:pointer}
 .kpi-card.clickable:hover{border-color:var(--accent)}
+
+/* Poor-signal AP breakdown banner (clients) */
+.poor-ap-banner{display:flex;flex-wrap:wrap;align-items:center;gap:6px;
+  background:#2b1213;border:1px solid #74302d;border-radius:6px;
+  padding:8px 12px;margin-bottom:10px;font-size:13px;color:#ffb3b8}
+.poor-ap-chip{background:#1b0d0e;color:#ffb3b8;border:1px solid #74302d;
+  border-radius:999px;padding:2px 10px;cursor:pointer;font-size:12px}
+.poor-ap-chip:hover{border-color:#ff5a5f}
+/* Disabled SMTP credential fields when security = none */
+.nf-disabled{opacity:.45}

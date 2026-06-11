@@ -80,3 +80,58 @@ document.addEventListener("DOMContentLoaded", () => {
       .catch(() => { testStatus.textContent = "Failed ✗"; });
   });
 });
+
+// ── Security-mode form behavior + per-channel test buttons ───────────────
+document.addEventListener("DOMContentLoaded", () => {
+  const root = document.querySelector("[data-notifications]");
+  if (!root) return;
+
+  const security = root.querySelector('[data-nf="smtp.security"]');
+  const port = root.querySelector('[data-nf="smtp.port"]');
+  const user = root.querySelector('[data-nf="smtp.username"]');
+  const pass = root.querySelector('[data-nf="smtp.password"]');
+  const DEFAULT_PORTS = { starttls: 587, ssl: 465, none: 25 };
+
+  const applySecurity = (changePort) => {
+    if (!security) return;
+    const mode = security.value || "starttls";
+    // Only auto-switch the port when it still holds a default value.
+    if (changePort && port &&
+        [25, 465, 587, 0].includes(Number(port.value || 0))) {
+      port.value = DEFAULT_PORTS[mode] || 587;
+    }
+    // No TLS -> credentials would travel in cleartext; gray them out.
+    const lock = mode === "none";
+    [user, pass].forEach(el => {
+      if (!el) return;
+      el.disabled = lock;
+      el.closest("label").classList.toggle("nf-disabled", lock);
+    });
+  };
+  if (security) {
+    security.addEventListener("change", () => applySecurity(true));
+    // Initial state once the saved config has been loaded.
+    setTimeout(() => applySecurity(false), 600);
+  }
+
+  const wireTest = (btnSel, statusSel, kind) => {
+    const btn = root.querySelector(btnSel);
+    const status = root.querySelector(statusSel);
+    if (!btn || !status) return;
+    btn.addEventListener("click", () => {
+      status.textContent = "Sending…";
+      fetch(kind === "report-full" ? "/api/reports/test" : "/api/notifications/test", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": _nfCsrf() },
+        body: JSON.stringify({ kind }),
+      }).then(r => r.json().then(b => ({ ok: r.ok, b })))
+        .then(({ ok, b }) => {
+          status.textContent = ok ? `Sent ✓ → ${(b.recipients || []).join(", ")}`
+                                  : `Failed: ${b.error || "unknown"}`;
+        })
+        .catch(() => { status.textContent = "Failed ✗"; });
+    });
+  };
+  wireTest("[data-notif-test-alert]", "[data-alert-test-status]", "alerts");
+  wireTest("[data-notif-email-report]", "[data-report-test-status]", "report-full");
+});

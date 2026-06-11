@@ -7,7 +7,7 @@ kinds fall within the allowed vocabularies.
 import ruckus_dashboard.modules._registry  # noqa: F401  side-effect: register stubs
 from ruckus_dashboard.modules import all_modules
 
-COLUMN_KINDS = {"text", "status", "bytes", "uptime", "number", "link"}
+COLUMN_KINDS = {"text", "status", "bytes", "uptime", "number", "link", "rate"}
 FILTER_KINDS = {"select", "search"}
 
 

@@ -88,7 +88,7 @@ def test_clients_summary_bands_poor_and_top_talker():
     assert s["total"] == 2
     assert s["band_5"] == 1 and s["band_2_4"] == 1
     assert s["poor_signal"] == 1
-    assert s["top_talker"] == "big-talker"
+    assert s["top_bandwidth_user"] == "big-talker"
 
 
 def test_clients_registered():

@@ -52,7 +52,7 @@ def summary(data: dict[str, Any]) -> dict[str, Any]:
     return {"total": len(items),
             "band_2_4": bands["2.4 GHz"], "band_5": bands["5 GHz"],
             "band_6": bands["6 GHz"], "poor_signal": poor,
-            "top_talker": top_name if items else "—"}
+            "top_bandwidth_user": top_name if items else "—"}
 
 
 def fetch_drill(ctx: FetcherContext, entity_id: str) -> dict[str, Any]:

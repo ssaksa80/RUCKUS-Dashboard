@@ -18,8 +18,29 @@ def fetch(ctx: FetcherContext) -> dict[str, Any]:
     # Paginate: SmartZone caps a single page at 500, fabrics often exceed it.
     rows = smartzone_query_paged(ctx.connection, "query/ap", ctx.config, [],
                                  body=_filter_body(ctx.filters))
+    rssi_by_ap = _client_rssi_by_ap(ctx)
     items = [_normalize(r) for r in rows]
+    for i in items:
+        key = (str(i.get("mac") or "").lower(), str(i.get("name") or "").lower())
+        i["signal_db"] = rssi_by_ap.get(key[0]) or rssi_by_ap.get(key[1])
     return {"items": items, "raw_count": len(rows)}
+
+
+def _client_rssi_by_ap(ctx: FetcherContext) -> dict[str, int]:
+    """Realtime per-AP average client signal (dBm) — refreshed every poll."""
+    try:
+        rows = smartzone_query_paged(ctx.connection, "query/client", ctx.config, [])
+    except Exception:  # noqa: BLE001
+        return {}
+    sums: dict[str, list[int]] = {}
+    for c in rows or []:
+        rssi = int(c.get("rssi") or 0)
+        if not rssi:
+            continue
+        for key in (c.get("apMac"), c.get("apName")):
+            if key:
+                sums.setdefault(str(key).lower(), []).append(rssi)
+    return {k: round(sum(v) / len(v)) for k, v in sums.items() if v}
 
 
 def summary(data: dict[str, Any]) -> dict[str, Any]:
@@ -106,6 +127,7 @@ register(ModuleSpec(
         Column("Zone", "zone"),
         Column("Status", "status", "status"),
         Column("Clients", "clients", "number"),
+        Column("Signal dB", "signal_db", "number"),
         Column("Firmware", "fw"),
         Column("IP", "ip"),
         Column("MAC", "mac"),

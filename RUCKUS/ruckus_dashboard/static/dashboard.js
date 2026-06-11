@@ -30,6 +30,16 @@ function humanBytes(n) {
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+function humanRate(bps) {
+  let v = Number(bps);
+  if (bps === null || bps === undefined || !isFinite(v)) return "measuring…";
+  if (v <= 0) return "0 bps";
+  const units = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"];
+  let i = 0;
+  while (v >= 1000 && i < units.length - 1) { v /= 1000; i += 1; }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
 function humanUptime(seconds) {
   let s = Number(seconds);
   if (!isFinite(s) || s <= 0) return "—";
@@ -61,6 +71,7 @@ function formatCell(value, kind) {
     return `<span class="status-pill status-${cls}">${_escape(value)}</span>`;
   }
   if (kind === "bytes") return humanBytes(value);
+  if (kind === "rate") return humanRate(value);
   if (kind === "uptime") return humanUptime(value);
   if (Array.isArray(value)) return value.length ? _escape(value.join(", ")) : "—";
   if (typeof value === "object") return _escape(JSON.stringify(value));
@@ -123,9 +134,10 @@ function renderModule(slug, payload) {
     // text; escape here where the result goes through innerHTML (summary values
     // like top_switch carry controller-sourced names).
     const filterMap = KPI_FILTER_MAP[slug] || {};
+    const labels = KPI_LABELS[slug] || {};
     strip.innerHTML = Object.entries(payload.summary)
       .map(([k, v]) => {
-        const label = k.replace(/_/g, " ");
+        const label = labels[k] || k.replace(/_/g, " ");
         const clickable = filterMap[k] ? ` clickable" data-kpi-key="${_escape(k)}` : "";
         return `<div class="kpi-card neutral${clickable}"><span class="kpi-label">${_escape(label)}</span>` +
                `<span class="kpi-value" aria-live="polite">${_escape(formatKpiValue(v))}</span></div>`;
@@ -194,6 +206,23 @@ const KPI_FILTER_MAP = {
     poor_signal: { quality: "poor" },
     total: {},                       // clears all filters
   },
+  alarms: {
+    critical: { severity: "critical" },
+    major: { severity: "major" },
+    minor: { severity: "minor" },
+    warning: { severity: "warning" },
+    total: {},
+  },
+};
+
+// Friendly KPI card labels where the auto "key → spaces" reads poorly.
+const KPI_LABELS = {
+  clients: {
+    band_2_4: "Band 2.4 GHz",
+    band_5: "Band 5 GHz",
+    band_6: "Band 6 GHz",
+    top_bandwidth_user: "Top Bandwidth User",
+  },
 };
 
 function applyKpiFilter(root, slug, kpiKey) {
@@ -222,6 +251,38 @@ function renderData(root, slug, spec, items) {
     ((spec.supports_views && spec.supports_views[0]) || "table");
   if (view === "grid") renderGrid(root, slug, spec, items);
   else renderColumns(root, slug, spec, items);  // table + fallback for other views
+  _maybePoorApBreakdown(root, slug, items);
+}
+
+// When the clients quality filter is "poor", prepend a per-AP breakdown so the
+// operator sees which APs carry the poor-signal users; chips narrow to one AP.
+function _maybePoorApBreakdown(root, slug, items) {
+  if (slug !== "clients") return;
+  const filters = activeFilters[slug] || {};
+  if (filters.quality !== "poor") return;
+  const area = root.querySelector("[data-data-area]");
+  if (!area) return;
+  const counts = {};
+  _applyFilters(slug, items).forEach(c => {
+    const ap = c.ap || "—";
+    counts[ap] = (counts[ap] || 0) + 1;
+  });
+  const chips = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 20)
+    .map(([ap, n]) =>
+      `<button class="poor-ap-chip" data-poor-ap="${_escape(ap)}">` +
+      `${_escape(ap)} <strong>${n}</strong></button>`).join("");
+  area.insertAdjacentHTML("afterbegin",
+    `<div class="poor-ap-banner"><span>APs with poor-signal clients:</span>${chips}</div>`);
+  area.querySelectorAll("[data-poor-ap]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const filters2 = activeFilters[slug] = activeFilters[slug] || {};
+      filters2.ap = filters2.ap === btn.dataset.poorAp ? "" : btn.dataset.poorAp;
+      root.querySelectorAll('[data-filter-key="ap"]').forEach(ctrl => {
+        if (ctrl.tagName === "SELECT") ctrl.value = filters2.ap || "";
+      });
+      renderData(root, slug, moduleSpecs[slug] || {}, lastItems[slug] || []);
+    });
+  });
 }
 
 function wireViewToggle(root, slug, spec) {

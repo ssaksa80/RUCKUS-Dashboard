@@ -37,6 +37,8 @@
       <label class="checkbox-label"><input data-nf="alerts.rules.switch_offline" type="checkbox" checked> Switch offline</label>
       <label class="checkbox-label"><input data-nf="alerts.rules.critical_alarm" type="checkbox" checked> Critical alarm</label>
       <label class="checkbox-label"><input data-nf="alerts.rules.poor_client_ap" type="checkbox" checked> 80%+ poor clients on one AP</label>
+      <button class="button secondary" data-notif-test-alert>Send test alert</button>
+      <span class="notif-status" data-alert-test-status></span>
     </div>
 
     <div class="notif-card">
@@ -45,6 +47,8 @@
       <label>Send at (HH:MM) <input data-nf="report.time" value="07:00"></label>
       <label>Recipients (comma-separated) <input data-nf="report.recipients"></label>
       <a class="button secondary" href="/api/reports/generate">Download report now</a>
+      <button class="button secondary" data-notif-email-report>E-mail report now</button>
+      <span class="notif-status" data-report-test-status></span>
     </div>
   </div>
 

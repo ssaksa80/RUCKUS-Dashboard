@@ -59,16 +59,23 @@ def _build_query(filters: dict | None) -> dict:
 
 
 def _normalize(row: dict) -> dict:
-    ack = row.get("ackState")
+    # Live 7.1.1 rows vary in which identity/ack keys they populate.
+    source = (row.get("sourceName") or row.get("entityName")
+              or row.get("apName") or row.get("switchName")
+              or row.get("deviceName") or row.get("entityId"))
+    ack = (row.get("ackState") or row.get("acknowledged")
+           or row.get("ackStatus"))
+    if isinstance(ack, bool):
+        ack = "acked" if ack else "unacked"
     return {
         "id": row.get("alarmId"),
         "severity": str(row.get("severity") or "").lower(),
         "category": row.get("category"),
-        "source": row.get("sourceName"),
-        "message": row.get("alarmType"),
+        "source": source,
+        "message": row.get("alarmType") or row.get("activityDesc"),
         "first_seen": row.get("firstAppearTime"),
         "last_seen": row.get("lastAppearTime"),
-        "ack_state": ack.lower() if ack else "",
+        "ack_state": str(ack).lower() if ack else "unacked",
         "count": int(row.get("alarmCount") or 1),
     }
 

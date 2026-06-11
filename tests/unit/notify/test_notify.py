@@ -242,3 +242,48 @@ def test_send_email_reports_failing_stage(monkeypatch):
     assert ei.value.stage == "login"
     assert "authentication rejected" in ei.value.detail
     assert "5.7.8" in ei.value.detail
+
+
+def test_traffic_live_rate_from_deltas(monkeypatch):
+    """Second traffic poll derives bits/s from the cumulative-byte delta."""
+    import responses as resp
+    import time as _t
+    from ruckus_dashboard.modules import traffic as traffic_mod
+    from ruckus_dashboard.auth.session_store import ConnectionConfig
+    from ruckus_dashboard.modules._base import FetcherContext
+    from ruckus_dashboard.infra.capability_gate import CapabilityGate
+
+    cfg = {"RUCKUS_TIMEOUT_SECONDS": 5, "RUCKUS_DEBUG_BYTES": 1000,
+           "RUCKUS_PAGE_LIMIT": 500, "RUCKUS_HOST_ALLOWLIST": None}
+    conn = ConnectionConfig(platform="smartzone",
+        api_base="https://sz.example:8443/wsg/api/public", display_name="SZ",
+        auth_token="t", api_version="v11_0", verify_tls=False,
+        token_expires_at=9999999999)
+    ctx = FetcherContext(connection=conn, config=cfg, filters=None,
+        capability_gate=CapabilityGate(set()), connection_label="SZ")
+
+    sw = "https://sz.example:8443/switchm/api"
+    traffic_mod._PREV["t"] = 0.0
+    traffic_mod._PREV["bytes"] = {}
+
+    with resp.RequestsMock() as rs:
+        rs.add(resp.POST, f"{sw}/v11_0/switch",
+               json={"list": [{"id": "S1", "switchName": "SW-1"}],
+                     "totalCount": 1, "hasMore": False}, status=200)
+        rs.add(resp.POST, f"{sw}/v11_0/traffic/top/usage",
+               json={"list": [{"key": "S1", "value": 1000}]}, status=200)
+        out1 = traffic_mod.fetch(ctx)
+    assert out1["items"][0]["rate_bps"] is None    # first sample
+
+    # Pretend the first poll happened 10 s ago.
+    traffic_mod._PREV["t"] = _t.time() - 10
+
+    with resp.RequestsMock() as rs:
+        rs.add(resp.POST, f"{sw}/v11_0/switch",
+               json={"list": [{"id": "S1", "switchName": "SW-1"}],
+                     "totalCount": 1, "hasMore": False}, status=200)
+        rs.add(resp.POST, f"{sw}/v11_0/traffic/top/usage",
+               json={"list": [{"key": "S1", "value": 11000}]}, status=200)
+        out2 = traffic_mod.fetch(ctx)
+    rate = out2["items"][0]["rate_bps"]
+    assert rate is not None and 7000 <= rate <= 9000   # ~8000 bps
