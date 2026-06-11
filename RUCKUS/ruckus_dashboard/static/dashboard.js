@@ -142,7 +142,8 @@ function renderModule(slug, payload) {
   lastItems[slug] = items;
   const spec = moduleSpecs[slug] || {};
   renderFilters(root, slug, spec, items);
-  renderColumns(root, slug, spec, items);
+  wireViewToggle(root, slug, spec);
+  renderData(root, slug, spec, items);
 
   const eb = root.querySelector("[data-error-banner]");
   if (eb) {
@@ -169,6 +170,62 @@ function _applyFilters(slug, items) {
       }
     }
     return true;
+  });
+}
+
+// Per-slug selected view ("table" | "grid" | …). Default: first supported.
+const activeViews = {};
+
+function renderData(root, slug, spec, items) {
+  const view = activeViews[slug] ||
+    ((spec.supports_views && spec.supports_views[0]) || "table");
+  if (view === "grid") renderGrid(root, slug, spec, items);
+  else renderColumns(root, slug, spec, items);  // table + fallback for other views
+}
+
+function wireViewToggle(root, slug, spec) {
+  const host = root.querySelector("[data-views]");
+  if (!host || host.dataset.wired === slug) return;
+  host.dataset.wired = slug;
+  host.querySelectorAll("[data-view]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      activeViews[slug] = btn.dataset.view;
+      host.querySelectorAll("[data-view]").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      renderData(root, slug, moduleSpecs[slug] || {}, lastItems[slug] || []);
+    });
+  });
+}
+
+function renderGrid(root, slug, spec, items) {
+  const area = root.querySelector("[data-data-area]");
+  if (!area) return;
+  const rows = _applyFilters(slug, items);
+  if (rows.length === 0) {
+    area.innerHTML = `<p class="empty">No results.</p>`;
+    return;
+  }
+  const cols = (spec.columns && spec.columns.length)
+    ? spec.columns
+    : Object.keys(rows[0]).map(k => ({ label: k, key: k, kind: "text" }));
+  const titleCol = cols[0];
+  const statusCol = cols.find(c => c.kind === "status");
+  const fieldCols = cols.filter(c => c !== titleCol && c !== statusCol).slice(0, 5);
+  const drillable = !!spec.has_drill;
+  const cards = rows.slice(0, 600).map(row => {
+    const id = row.id != null ? encodeURIComponent(row.id) : "";
+    const href = (drillable && id) ? `/m/${encodeURIComponent(slug)}/${id}` : "";
+    const fields = fieldCols.map(c =>
+      `<div class="card-row"><span>${_escape(c.label)}</span>` +
+      `<span>${formatCell(row[c.key], c.kind)}</span></div>`).join("");
+    return `<div class="item-card"${href ? ` data-href="${href}"` : ""}>` +
+           `<div class="card-head"><strong>${formatCell(row[titleCol.key], titleCol.kind)}</strong>` +
+           `${statusCol ? formatCell(row[statusCol.key], "status") : ""}</div>` +
+           fields + `</div>`;
+  }).join("");
+  area.innerHTML = `<div class="card-grid">${cards}</div>`;
+  area.querySelectorAll(".item-card[data-href]").forEach(card => {
+    card.addEventListener("click", () => { location.href = card.dataset.href; });
   });
 }
 
@@ -229,7 +286,7 @@ function renderFilters(root, slug, spec, items) {
     const handler = () => {
       activeFilters[slug] = activeFilters[slug] || {};
       activeFilters[slug][ctrl.dataset.filterKey] = ctrl.value;
-      renderColumns(root, slug, spec, lastItems[slug] || []);
+      renderData(root, slug, spec, lastItems[slug] || []);
     };
     ctrl.addEventListener("change", handler);
     ctrl.addEventListener("input", handler);

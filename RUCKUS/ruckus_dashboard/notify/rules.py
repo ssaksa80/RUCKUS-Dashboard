@@ -33,4 +33,13 @@ def evaluate(prev: dict | None, current: dict,
         alerts.append(f"Critical alarms active: {crit} "
                       f"(was {int(prev.get('critical_alarms') or 0)}).")
 
+    # ≥80% of an AP's clients on poor signal — alert on newly-degraded APs only.
+    if rules.get("poor_client_ap", True):
+        prev_aps = {str(p).split(" (")[0] for p in prev.get("poor_aps") or []}
+        for entry in current.get("poor_aps") or []:
+            ap = str(entry).split(" (")[0]
+            if ap not in prev_aps:
+                alerts.append(f"AP signal degradation: {entry} — 80%+ of "
+                              f"connected clients report poor connection.")
+
     return alerts

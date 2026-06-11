@@ -138,6 +138,7 @@ def _normalize(row: dict) -> dict:
         "user": row.get("userName") or row.get("username"),
         "ssid": row.get("ssid"),
         "ap": row.get("apName") or row.get("apMac"),
+        "site": row.get("zoneName") or row.get("zoneId") or row.get("domainName"),
         "band": _band(row),
         "channel": row.get("channel"),
         "vlan": row.get("vlanId") or row.get("vlan"),
@@ -176,6 +177,7 @@ register(ModuleSpec(
         Column("User", "user"),
         Column("SSID", "ssid"),
         Column("AP", "ap"),
+        Column("Site", "site"),
         Column("Band", "band"),
         Column("Ch", "channel", "number"),
         Column("VLAN", "vlan", "number"),
@@ -189,5 +191,7 @@ register(ModuleSpec(
         Filter("os", "OS", "select"),
         Filter("band", "Band", "select"),
         Filter("quality", "Quality", "select"),
+        Filter("ap", "AP", "select"),
+        Filter("site", "Site", "select"),
     ),
 ))

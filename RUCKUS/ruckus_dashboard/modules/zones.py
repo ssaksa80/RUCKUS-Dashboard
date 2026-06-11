@@ -6,7 +6,7 @@ from urllib.parse import quote
 from . import register
 from ._base import Column, FetcherContext, ModuleSpec, TabSpec
 from ..clients.smartzone import (
-    smartzone_paged_get, smartzone_get, smartzone_post, smartzone_query_body,
+    smartzone_paged_get, smartzone_get, smartzone_query_paged,
 )
 
 POLL_SECONDS = 60
@@ -34,14 +34,15 @@ def fetch(ctx: FetcherContext) -> dict[str, Any]:
 
 
 def _ap_counts_by_zone(ctx: FetcherContext) -> dict[str, int]:
-    """One bulk /query/ap call → {zoneId: ap_count}. Best-effort."""
+    """Paged /query/ap walk → {zoneId: ap_count}. Best-effort.
+
+    Must paginate — a single page caps at 500 and undercounts 800+ AP fabrics."""
     try:
-        resp = smartzone_post(ctx.connection, "query/ap", ctx.config,
-                              smartzone_query_body(None), []) or {}
+        rows = smartzone_query_paged(ctx.connection, "query/ap", ctx.config, [])
     except Exception:  # noqa: BLE001
         return {}
     counts: dict[str, int] = {}
-    for ap in resp.get("list") or []:
+    for ap in rows or []:
         zid = str(ap.get("zoneId") or "")
         if zid:
             counts[zid] = counts.get(zid, 0) + 1

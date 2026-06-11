@@ -110,7 +110,32 @@ def test_state_from_data_counts():
             "alarms": [{"severity": "critical", "count": 3},
                        {"severity": "major", "count": 1}]}
     s = state_from_data(data)
-    assert s == {"aps_offline": 1, "switches_offline": 1, "critical_alarms": 3}
+    assert s["aps_offline"] == 1
+    assert s["switches_offline"] == 1
+    assert s["critical_alarms"] == 3
+    assert s["poor_aps"] == []
+
+
+def test_poor_quality_aps_threshold():
+    from ruckus_dashboard.notify.scheduler import poor_quality_aps
+    clients = ([{"ap": "AP-BAD", "quality": "poor"}] * 4 +
+               [{"ap": "AP-BAD", "quality": "good"}] +     # 4/5 poor = 80%
+               [{"ap": "AP-OK", "quality": "poor"}] +      # only 1 client -> skip
+               [{"ap": "AP-FINE", "quality": "good"}] * 5)
+    flagged = poor_quality_aps(clients)
+    assert flagged == ["AP-BAD (4/5 poor)"]
+
+
+def test_poor_ap_rule_fires_for_new_aps_only():
+    rules = {"poor_client_ap": True}
+    first = evaluate(None, {"poor_aps": ["AP-1 (4/5 poor)"]}, rules, 1)
+    assert len(first) == 1 and "AP-1" in first[0]
+    same = evaluate({"poor_aps": ["AP-1 (4/5 poor)"]},
+                    {"poor_aps": ["AP-1 (5/6 poor)"]}, rules, 1)
+    assert same == []                       # same AP still degraded -> silent
+    new = evaluate({"poor_aps": ["AP-1 (4/5 poor)"]},
+                   {"poor_aps": ["AP-1 (4/5 poor)", "AP-2 (3/3 poor)"]}, rules, 1)
+    assert len(new) == 1 and "AP-2" in new[0]
 
 
 # ── excel report ─────────────────────────────────────────────────────────
