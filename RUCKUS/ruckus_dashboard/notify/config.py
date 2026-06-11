@@ -12,7 +12,7 @@ from typing import Any
 PASSWORD_MASK = "********"
 
 DEFAULTS: dict[str, Any] = {
-    "smtp": {"host": "", "port": 587, "use_tls": True, "username": "",
+    "smtp": {"host": "", "port": 587, "security": "starttls", "username": "",
              "password_enc": "", "from_addr": ""},
     "alerts": {"enabled": False, "recipients": [], "check_seconds": 300,
                "rules": {"ap_offline": True, "switch_offline": True,

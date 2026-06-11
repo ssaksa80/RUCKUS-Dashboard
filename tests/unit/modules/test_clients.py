@@ -65,6 +65,9 @@ def test_clients_drill_not_found_is_friendly():
 def test_band_and_quality_derivations():
     assert clients_mod._band({"radioType": "11ax (6GHz)"}) == "6 GHz"
     assert clients_mod._band({"radioType": "11g/n"}) == "2.4 GHz"
+    # Live 7.1.1: radioType like "11ax" carries no band — channel decides.
+    assert clients_mod._band({"radioType": "11ax", "channel": 52}) == "5 GHz"
+    assert clients_mod._band({"radioType": "11ax", "channel": 6}) == "2.4 GHz"
     assert clients_mod._band({}) == "—"
     assert clients_mod._quality(-62) == "good"
     assert clients_mod._quality(-70) == "fair"

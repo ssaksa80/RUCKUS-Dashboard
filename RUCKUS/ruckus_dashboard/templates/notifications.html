@@ -13,7 +13,13 @@
       <h3>SMTP server</h3>
       <label>Host <input data-nf="smtp.host" placeholder="smtp.example.com"></label>
       <label>Port <input data-nf="smtp.port" type="number" value="587"></label>
-      <label class="checkbox-label"><input data-nf="smtp.use_tls" type="checkbox" checked> Use STARTTLS</label>
+      <label>Security
+        <select data-nf="smtp.security">
+          <option value="starttls">STARTTLS (port 587)</option>
+          <option value="ssl">SSL/TLS (port 465)</option>
+          <option value="none">None (port 25)</option>
+        </select>
+      </label>
       <label>Username <input data-nf="smtp.username"></label>
       <label>Password <input data-nf="smtp.password" type="password" autocomplete="new-password"></label>
       <label>From address <input data-nf="smtp.from_addr" placeholder="dso@company.com"></label>

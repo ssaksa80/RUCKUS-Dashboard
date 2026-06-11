@@ -153,6 +153,7 @@ def test_send_email_via_monkeypatched_smtp(monkeypatch):
 
         def __enter__(self): return self
         def __exit__(self, *a): return False
+        def ehlo(self): sent["ehlo"] = sent.get("ehlo", 0) + 1
         def starttls(self): sent["tls"] = True
         def login(self, u, p): sent["login"] = (u, p)
         def send_message(self, msg): sent["subject"] = msg["Subject"]
@@ -162,6 +163,7 @@ def test_send_email_via_monkeypatched_smtp(monkeypatch):
                     "username": "u", "from_addr": "dso@x"}}
     mailer.send_email(cfg, "pw", ["a@x"], "Subject!", "body")
     assert sent["host"] == "mail.x" and sent["tls"] is True
+    assert sent["ehlo"] == 2   # before and after STARTTLS (networker pattern)
     assert sent["login"] == ("u", "pw")
     assert sent["subject"] == "Subject!"
 
@@ -172,3 +174,46 @@ def test_send_email_requires_host_and_recipients():
         send_email({"smtp": {"host": ""}}, "", ["a@x"], "s", "b")
     with pytest.raises(ValueError):
         send_email({"smtp": {"host": "mail.x"}}, "", [], "s", "b")
+
+
+def test_send_email_ssl_mode_uses_smtp_ssl(monkeypatch):
+    from ruckus_dashboard.notify import mailer
+    used = {}
+
+    class FakeSSL:
+        def __init__(self, host, port, timeout=0): used["ssl"] = (host, port)
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def login(self, u, p): used["login"] = (u, p)
+        def send_message(self, msg): used["sent"] = True
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP_SSL", FakeSSL)
+    cfg = {"smtp": {"host": "mail.x", "port": 465, "security": "ssl",
+                    "username": "u", "from_addr": "dso@x"}}
+    out = mailer.send_email(cfg, "pw", ["a@x"], "s", "b")
+    assert used["ssl"] == ("mail.x", 465) and used["sent"]
+    assert out["stage"] == "sent" and out["security"] == "ssl"
+
+
+def test_send_email_reports_failing_stage(monkeypatch):
+    import smtplib as real_smtplib
+    from ruckus_dashboard.notify import mailer
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=0): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def ehlo(self): pass
+        def starttls(self): pass
+        def login(self, u, p):
+            raise real_smtplib.SMTPAuthenticationError(535, b"5.7.8 Bad creds")
+        def send_message(self, msg): pass
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP", FakeSMTP)
+    cfg = {"smtp": {"host": "mail.x", "port": 587, "security": "starttls",
+                    "username": "u"}}
+    with pytest.raises(mailer.SmtpDeliveryError) as ei:
+        mailer.send_email(cfg, "wrong", ["a@x"], "s", "b")
+    assert ei.value.stage == "login"
+    assert "authentication rejected" in ei.value.detail
+    assert "5.7.8" in ei.value.detail

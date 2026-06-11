@@ -86,6 +86,14 @@ def _band(row: dict) -> str:
         return "5 GHz"
     if "2.4" in text or "24g" in text or "11g" in text or "11b" in text:
         return "2.4 GHz"
+    # Live 7.1.1 radioType strings often carry no band digit ("11ax") — fall
+    # back to the channel number, which the controller always reports.
+    try:
+        channel = int(row.get("channel") or 0)
+    except (TypeError, ValueError):
+        channel = 0
+    if channel:
+        return "2.4 GHz" if channel <= 14 else "5 GHz"
     return "—"
 
 
