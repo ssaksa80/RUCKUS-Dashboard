@@ -96,3 +96,20 @@ def test_clients_registered():
     assert MODULES["clients"].fetcher is clients_mod.fetch
     assert [t.slug for t in MODULES["clients"].drill_tabs] == [
         "summary", "connection", "usage", "raw"]
+
+
+@responses.activate
+def test_clients_site_resolves_guid_to_zone_name():
+    base = "https://sz.example:8443/wsg/api/public"
+    row = dict(ROW)
+    row["zoneId"] = "819550ca-cc2b"
+    row.pop("zoneName", None)
+    responses.add(responses.POST, f"{base}/v11_0/query/client",
+                  json={"list": [row], "totalCount": 1, "hasMore": False}, status=200)
+    responses.add(responses.GET, f"{base}/v11_0/rkszones",
+                  json={"list": [{"id": "819550ca-cc2b", "name": "AHD-OM"}],
+                        "totalCount": 1, "hasMore": False}, status=200)
+    out = clients_mod.fetch(_ctx())
+    c = out["items"][0]
+    assert c["site"] == "AHD-OM"          # name, not GUID
+    assert c["site_id"] == "819550ca-cc2b"  # GUID kept for the drill

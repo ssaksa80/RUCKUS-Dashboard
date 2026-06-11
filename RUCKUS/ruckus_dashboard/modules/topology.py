@@ -43,8 +43,27 @@ def fetch(ctx: FetcherContext) -> dict[str, Any]:
     alarms_by_name = _alarm_counts(ctx)
     expand_raw = str((ctx.filters or {}).get("expand") or "")
     expand = {z for z in (p.strip() for p in expand_raw.split(",")) if z}
+    # Per-AP average client signal — only worth the client pull when AP
+    # leaves are actually being rendered (a zone is expanded).
+    rssi_by_ap = _rssi_by_ap(ctx) if expand else {}
     return _build_graph(cluster, zones, aps, switches, traffic_by_mac,
-                        alarms_by_name=alarms_by_name, expand=expand)
+                        alarms_by_name=alarms_by_name, expand=expand,
+                        rssi_by_ap=rssi_by_ap)
+
+
+def _rssi_by_ap(ctx) -> dict[str, int]:
+    """{ap mac/name (lower): avg client rssi dBm}. Best-effort."""
+    rows = _safe(lambda: smartzone_query_paged(
+        ctx.connection, "query/client", ctx.config, [])) or []
+    sums: dict[str, list[int]] = {}
+    for c in rows:
+        rssi = int(c.get("rssi") or 0)
+        if not rssi:
+            continue
+        for key in (c.get("apMac"), c.get("apName")):
+            if key:
+                sums.setdefault(str(key).lower(), []).append(rssi)
+    return {k: round(sum(v) / len(v)) for k, v in sums.items() if v}
 
 
 def _alarm_counts(ctx) -> dict[str, int]:
@@ -94,10 +113,11 @@ def _traffic_map(ctx) -> dict:
 
 
 def _build_graph(cluster, zones, aps, switches, traffic_by_mac,
-                 alarms_by_name=None, expand=frozenset()):
+                 alarms_by_name=None, expand=frozenset(), rssi_by_ap=None):
     cluster = cluster or {}
     traffic_by_mac = traffic_by_mac or {}
     alarms_by_name = alarms_by_name or {}
+    rssi_by_ap = rssi_by_ap or {}
     expand = set(expand or ())
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -138,10 +158,15 @@ def _build_graph(cluster, zones, aps, switches, traffic_by_mac,
                 mac = ap.get("apMac") or ap.get("mac")
                 astatus = _norm_status(ap.get("status"))
                 a_alarms = _alarms_for(alarms_by_name, ap.get("deviceName"), mac)
-                nodes.append({"id": mac, "label": ap.get("deviceName") or mac,
+                rssi = (rssi_by_ap.get(str(mac or "").lower())
+                        or rssi_by_ap.get(str(ap.get("deviceName") or "").lower()))
+                name = ap.get("deviceName") or mac
+                label = f"{name} ({rssi} dB)" if rssi else name
+                nodes.append({"id": mac, "label": label,
                               "type": "ap", "status": _escalate(astatus, a_alarms),
                               "meta": {"model": ap.get("model"),
                                        "ip": ap.get("ip") or ap.get("ipAddress"),
+                                       "rssi_avg": rssi,
                                        "alarm_count": a_alarms}})
                 edges.append({"source": node_id, "target": mac,
                               "status": astatus, "label": ""})

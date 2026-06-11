@@ -31,11 +31,12 @@ def test_switches_fetch_returns_normalised_rows():
 
 def test_switches_summary_aggregates_status_and_ports():
     data = {"items": [
-        {"status": "online", "ports_online": 22, "ports_total": 24},
-        {"status": "offline", "ports_online": 0, "ports_total": 48},
+        {"status": "online", "ports_online": 22, "ports_total": 24, "units": 2},
+        {"status": "offline", "ports_online": 0, "ports_total": 48, "units": 1},
     ]}
     s = switches_mod.summary(data)
-    assert s["total"] == 2
+    assert s["core_switches"] == 2          # inventory rows (core/stack entries)
+    assert s["total_switches"] == 3         # stack members counted via units
     assert s["online"] == 1
     assert s["offline"] == 1
     assert s["ports_up"] == 22
@@ -85,3 +86,25 @@ def test_stack_groups_multi_unit_switch_as_stack():
     assert out[0]["stack_id"] == "AA"
     assert out[0]["members"] == 2
     assert out[0]["ports_up"] == 24
+
+
+@responses.activate
+def test_switch_drill_lists_connected_group_members():
+    sw_base = "https://sz.example:8443/switchm/api"
+    responses.add(responses.POST, f"{sw_base}/v11_0/switch",
+                  json={"list": [
+                      {"id": "CORE", "switchName": "AHDSP-CORE", "groupId": "g1",
+                       "groupName": "SP", "status": "online", "numOfUnits": 2},
+                      {"id": "EDGE-1", "switchName": "AHDSP-EDGE-1", "groupId": "g1",
+                       "ipAddress": "10.0.0.2", "status": "online", "numOfUnits": 1},
+                      {"id": "OTHER", "switchName": "FAR", "groupId": "g2",
+                       "status": "online", "numOfUnits": 1},
+                  ], "totalCount": 3, "hasMore": False},
+                  status=200, match_querystring=False)
+    # ports/health endpoints 404 -> best-effort empty sections
+    responses.add(responses.POST, f"{sw_base}/v11_0/switch/ports/summary",
+                  json={}, status=404, match_querystring=False)
+    out = switches_mod.fetch_drill(_ctx(), "CORE")
+    names = [c["name"] for c in out["connected_switches"]]
+    assert names == ["AHDSP-EDGE-1"]      # same group, self and others excluded
+    assert out["connected_switches"][0]["ip"] == "10.0.0.2"

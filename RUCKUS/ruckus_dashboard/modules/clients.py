@@ -15,10 +15,22 @@ POLL_SECONDS = 20
 ICON = "\U0001F465"  # busts-in-silhouette emoji
 
 
+def _zone_names(ctx: FetcherContext) -> dict[str, str]:
+    """{zoneId: zoneName} so Site shows names, not GUIDs. Best-effort."""
+    try:
+        from ..clients.smartzone import smartzone_paged_get
+        rows = smartzone_paged_get(ctx.connection, "rkszones", ctx.config, debug=[])
+    except Exception:  # noqa: BLE001
+        return {}
+    return {str(z.get("id")): z.get("name")
+            for z in rows or [] if z.get("id") and z.get("name")}
+
+
 def fetch(ctx: FetcherContext) -> dict[str, Any]:
     # Paginate — fabrics commonly exceed the 500-row single-page cap.
     rows = smartzone_query_paged(ctx.connection, "query/client", ctx.config, [])
-    items = [_normalize(r) for r in rows]
+    zone_names = _zone_names(ctx)
+    items = [_normalize(r, zone_names) for r in rows]
     # raw_rows: first upstream rows (pre-normalize) so the dump exposes real keys.
     return {"items": items, "raw_count": len(rows), "raw_rows": rows[:2]}
 
@@ -55,10 +67,11 @@ def fetch_drill(ctx: FetcherContext, entity_id: str) -> dict[str, Any]:
     if row is None:
         return {"identity": {"mac": entity_id,
                              "note": "Client not currently connected."}}
-    n = _normalize(row)
+    n = _normalize(row, _zone_names(ctx))
     return {
         "identity": {"hostname": n["hostname"], "mac": n["mac"],
-                     "ip": n["ip"], "user": n["user"], "os": n["os"]},
+                     "ip": n["ip"], "user": n["user"], "os": n["os"],
+                     "site": n["site"], "site_id": n["site_id"]},
         "connection": {"ap": n["ap"], "ssid": n["ssid"], "band": n["band"],
                        "channel": n["channel"], "vlan": n["vlan"],
                        "rssi": n["rssi"], "snr": n["snr"],
@@ -127,9 +140,13 @@ def _session(row: dict) -> str:
     return str(row.get("connectionTime") or "—")
 
 
-def _normalize(row: dict) -> dict:
+def _normalize(row: dict, zone_names: dict[str, str] | None = None) -> dict:
+    zone_names = zone_names or {}
     mac = row.get("clientMac")
     rssi = int(row.get("rssi") or 0)
+    site_id = str(row.get("zoneId") or "")
+    site = (row.get("zoneName") or zone_names.get(site_id)
+            or site_id or row.get("domainName"))
     return {
         "id": mac,
         "mac": mac,
@@ -138,7 +155,8 @@ def _normalize(row: dict) -> dict:
         "user": row.get("userName") or row.get("username"),
         "ssid": row.get("ssid"),
         "ap": row.get("apName") or row.get("apMac"),
-        "site": row.get("zoneName") or row.get("zoneId") or row.get("domainName"),
+        "site": site,
+        "site_id": site_id,
         "band": _band(row),
         "channel": row.get("channel"),
         "vlan": row.get("vlanId") or row.get("vlan"),

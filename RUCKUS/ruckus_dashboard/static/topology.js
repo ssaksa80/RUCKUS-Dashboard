@@ -13,9 +13,39 @@ const topoState = {
   expanded: new Set(),    // zone ids fanned out
   collapsed: new Set(),   // group ids with switches tucked away
   prev: {},               // {id: {status, alarms}} from previous poll
+  prevTraffic: {},        // {switchId: {bytes, t}} for live-rate deltas
+  rates: {},              // {switchId: bps} — real-time throughput
   legend: null, root: null,
   vb: null, box: null,    // viewBox state
 };
+
+function fmtRate(bps) {
+  let v = Number(bps);
+  if (!isFinite(v) || v < 0) return "";
+  const units = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"];
+  let i = 0;
+  while (v >= 1000 && i < units.length - 1) { v /= 1000; i += 1; }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function updateRates(nodes) {
+  // Cumulative byte counters → live bps between polls (min 5 s apart so a
+  // local re-render doesn't divide by ~zero).
+  const now = Date.now() / 1000;
+  nodes.forEach(n => {
+    if (n.type !== "switch" || !n.meta || n.meta.traffic_bytes == null) return;
+    const prev = topoState.prevTraffic[n.id];
+    if (prev) {
+      const dt = now - prev.t;
+      if (dt >= 5 && n.meta.traffic_bytes >= prev.bytes) {
+        topoState.rates[n.id] = ((n.meta.traffic_bytes - prev.bytes) * 8) / dt;
+        topoState.prevTraffic[n.id] = { bytes: n.meta.traffic_bytes, t: now };
+      }
+    } else {
+      topoState.prevTraffic[n.id] = { bytes: n.meta.traffic_bytes, t: now };
+    }
+  });
+}
 
 function _esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, c =>
@@ -197,11 +227,10 @@ function edgePath(a, b) {
 }
 
 function edgeWidth(label, status) {
-  // Traffic-weighted: parse nothing — server provides bytes on switch meta;
-  // edges only carry the human label, so weight by label magnitude hint.
+  // Weight by the label's magnitude hint (live rates or cumulative sizes).
   if (!label) return status === "offline" ? 2.5 : 1.5;
-  if (label.includes("TB")) return 5;
-  if (label.includes("GB")) return 3.5;
+  if (label.includes("Gbps") || label.includes("TB")) return 5;
+  if (label.includes("Mbps") || label.includes("GB")) return 3.5;
   return 2;
 }
 
@@ -253,7 +282,9 @@ function tooltipHtml(n) {
   add("ip", meta.ip); add("model", meta.model); add("firmware", meta.fw);
   add("cluster", meta.cluster_state);
   if (meta.ap_total !== undefined) add("APs", `${meta.ap_total} (${meta.ap_down || 0} down)`);
-  if (meta.traffic_bytes) add("traffic", humanTopoBytes(meta.traffic_bytes));
+  if (meta.rssi_avg) add("signal", `${meta.rssi_avg} dB (avg client)`);
+  if (topoState.rates[n.id] != null) add("live rate", fmtRate(topoState.rates[n.id]));
+  if (meta.traffic_bytes) add("total traffic", humanTopoBytes(meta.traffic_bytes));
   if (meta.alarm_count) add("alarms", meta.alarm_count);
   if (n.type === "zone") rows.push(`<div class="tt-row"><span>click</span><span>expand/collapse APs</span></div>`);
   return `<div class="tt-title">${_esc(n.label || n.id)}</div>${rows.join("")}`;
@@ -283,6 +314,7 @@ function renderTopology(root, payload) {
 
   // Collapse filter: full graph stays in state (toast diffing above), only
   // visible nodes are laid out and drawn.
+  updateRates(nodes);
   const vis = visibleGraph(nodes, edges, topoState.collapsed);
   topoState.visEdges = vis.edges;
   topoState.positions = layoutGraph(vis.nodes, vis.edges, topoState.saved, topoState.pinned);
@@ -295,13 +327,21 @@ function renderTopology(root, payload) {
   topoState.box = { minX, minY, w, h };
   if (!topoState.vb) topoState.vb = { ...topoState.box };
 
+  const byIdAll = Object.fromEntries(nodes.map(n => [n.id, n]));
   const edgeSvg = vis.edges.map((e, i) => {
     const a = pos[e.source], b = pos[e.target];
     if (!a || !b) return "";
     const col = TOPO_COLORS[e.status] || TOPO_COLORS.unknown;
-    const wpx = edgeWidth(e.label, e.status);
+    // Switch links label with the LIVE rate (delta between polls), not the
+    // cumulative byte total the controller reports.
+    let labelText = e.label;
+    if ((byIdAll[e.target] || {}).type === "switch") {
+      const bps = topoState.rates[e.target];
+      labelText = bps != null ? fmtRate(bps) : "";
+    }
+    const wpx = edgeWidth(labelText, e.status);
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-    const lbl = e.label ? `<text class="edge-label" x="${mx}" y="${my}">${_esc(e.label)}</text>` : "";
+    const lbl = labelText ? `<text class="edge-label" x="${mx}" y="${my}">${_esc(labelText)}</text>` : "";
     return `<path data-edge="${i}" data-src="${_esc(e.source)}" data-dst="${_esc(e.target)}" ` +
            `d="${edgePath(a, b)}" fill="none" stroke="${col}" stroke-width="${wpx}" stroke-opacity=".75"/>${lbl}`;
   }).join("");
@@ -476,8 +516,10 @@ function _wireTopo(root, svg) {
         const byId = Object.fromEntries(topoState.nodes.map(n => [n.id, n]));
         const sl = (byId[edge.source] || {}).label || edge.source;
         const tl = (byId[edge.target] || {}).label || edge.target;
+        const bps = topoState.rates[edge.target];
         tip.innerHTML = `<div class="tt-title">${_esc(sl)} ⇄ ${_esc(tl)}</div>` +
-                        `<div class="tt-row"><span>traffic</span><span>${_esc(edge.label || "—")}</span></div>` +
+                        `<div class="tt-row"><span>live rate</span><span>${_esc(bps != null ? fmtRate(bps) : "measuring…")}</span></div>` +
+                        `<div class="tt-row"><span>total traffic</span><span>${_esc(edge.label || "—")}</span></div>` +
                         `<div class="tt-row"><span>status</span><span>${_esc(edge.status || "unknown")}</span></div>`;
         tip.hidden = false;
         return;

@@ -105,3 +105,13 @@ def test_dashboard_js_has_view_switcher_and_grid():
         for sym in ["wireViewToggle", "renderGrid", "renderData", "activeViews",
                     "card-grid"]:
             assert sym in body, f"missing {sym}"
+
+
+def test_dashboard_js_kpi_filter_clicks():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        for sym in ["KPI_FILTER_MAP", "applyKpiFilter", "data-kpi-key",
+                    "poor_signal", "band_5"]:
+            assert sym in body, f"missing {sym}"

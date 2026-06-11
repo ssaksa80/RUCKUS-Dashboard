@@ -35,7 +35,11 @@ def summary(data: dict[str, Any]) -> dict[str, Any]:
     offline = sum(1 for i in items if i.get("status") == "offline")
     ports_up = sum(int(i.get("ports_online") or 0) for i in items)
     ports_total = sum(int(i.get("ports_total") or 0) for i in items)
-    return {"total": len(items), "online": online, "offline": offline,
+    # Inventory rows are core/stack entries; the full count includes every
+    # stack member (units).
+    total_switches = sum(int(i.get("units") or 1) for i in items)
+    return {"core_switches": len(items), "total_switches": total_switches,
+            "online": online, "offline": offline,
             "ports_up": ports_up, "ports_total": ports_total}
 
 
@@ -99,13 +103,28 @@ def fetch_drill(ctx: FetcherContext, entity_id: str) -> dict[str, Any]:
     only empties its own section."""
     identity: dict[str, Any] = {"id": entity_id}
     raw: Any = None
+    connected: list[dict[str, Any]] = []
     try:
         response = fetch_switches(ctx.connection, ctx.config) or {}
-        for row in response.get("switches") or []:
-            if str(row.get("id")) == str(entity_id):
-                identity = _normalize(row)
-                raw = row
-                break
+        rows = response.get("switches") or []
+        target = next((r for r in rows
+                       if str(r.get("id")) == str(entity_id)), None)
+        if target is not None:
+            identity = _normalize(target)
+            raw = target
+            # Switches connected to this core: same group/stack, minus itself.
+            gid = target.get("groupId") or target.get("stackId")
+            if gid:
+                connected = [
+                    {"name": r.get("switchName") or r.get("name"),
+                     "ip": r.get("ipAddress"),
+                     "model": r.get("model"),
+                     "status": str(r.get("status") or "").lower(),
+                     "units": int(r.get("numOfUnits") or 1)}
+                    for r in rows
+                    if (r.get("groupId") or r.get("stackId")) == gid
+                    and str(r.get("id")) != str(entity_id)
+                ]
     except Exception:  # noqa: BLE001 — identity falls back to {"id": entity_id}
         pass
 
@@ -119,7 +138,8 @@ def fetch_drill(ctx: FetcherContext, entity_id: str) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         health = {}
 
-    return {"identity": identity, "ports": ports, "health": health, "raw": raw}
+    return {"identity": identity, "connected_switches": connected,
+            "ports": ports, "health": health, "raw": raw}
 
 
 def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -173,6 +193,7 @@ register(ModuleSpec(
     drill_fetcher=fetch_drill,
     drill_tabs=(
         TabSpec(slug="summary", title="Summary"),
+        TabSpec(slug="connected_switches", title="Connected"),
         TabSpec(slug="ports", title="Ports"),
         TabSpec(slug="health", title="Health"),
         TabSpec(slug="raw", title="Raw"),

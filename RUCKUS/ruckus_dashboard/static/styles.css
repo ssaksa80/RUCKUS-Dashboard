@@ -252,3 +252,7 @@ body.dso-mode .health-bar{display:none}
 .view-toggle button.active{background:var(--rail-active);color:#fff}
 .view-toggle button{background:var(--surface);border:1px solid var(--border);color:var(--muted);
   border-radius:6px;padding:4px 12px;cursor:pointer;margin-right:4px}
+
+/* Clickable KPI cards (one-click filters) */
+.kpi-card.clickable{cursor:pointer}
+.kpi-card.clickable:hover{border-color:var(--accent)}

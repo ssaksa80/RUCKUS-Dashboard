@@ -108,3 +108,13 @@ def test_build_graph_zone_expansion_caps_and_orders():
 def test_topology_registered():
     from ruckus_dashboard.modules import MODULES
     assert MODULES["topology"].fetcher is topology_mod.fetch
+
+
+def test_expanded_ap_nodes_carry_avg_signal():
+    aps = [{"apMac": "AA:01", "deviceName": "AP-LOBBY", "zoneId": "z1",
+            "status": "Online"}]
+    g = topology_mod._build_graph(CLUSTER, ZONES, aps, [], {}, expand={"z1"},
+                                  rssi_by_ap={"aa:01": -62})
+    ap = next(n for n in g["nodes"] if n["type"] == "ap")
+    assert ap["meta"]["rssi_avg"] == -62
+    assert "(-62 dB)" in ap["label"]

@@ -33,3 +33,10 @@ def test_topology_js_animated_arrange_reset():
     assert "requestAnimationFrame" in js
     # Reset must not refetch from the controller (instant local relayout).
     assert "freshLayout" in js
+
+
+def test_topology_js_live_rates_and_ap_signal():
+    import pathlib
+    js = pathlib.Path("RUCKUS/ruckus_dashboard/static/topology.js").read_text(encoding="utf-8")
+    for sym in ["updateRates", "fmtRate", "prevTraffic", "rssi_avg", "live rate"]:
+        assert sym in js, f"missing {sym}"

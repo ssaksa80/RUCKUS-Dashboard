@@ -122,13 +122,20 @@ function renderModule(slug, payload) {
     // formatKpiValue is also used with textContent elsewhere, so it returns raw
     // text; escape here where the result goes through innerHTML (summary values
     // like top_switch carry controller-sourced names).
+    const filterMap = KPI_FILTER_MAP[slug] || {};
     strip.innerHTML = Object.entries(payload.summary)
       .map(([k, v]) => {
         const label = k.replace(/_/g, " ");
-        return `<div class="kpi-card neutral"><span class="kpi-label">${_escape(label)}</span>` +
+        const clickable = filterMap[k] ? ` clickable" data-kpi-key="${_escape(k)}` : "";
+        return `<div class="kpi-card neutral${clickable}"><span class="kpi-label">${_escape(label)}</span>` +
                `<span class="kpi-value" aria-live="polite">${_escape(formatKpiValue(v))}</span></div>`;
       })
       .join("");
+    strip.querySelectorAll("[data-kpi-key]").forEach(card => {
+      card.addEventListener("click", () => {
+        applyKpiFilter(root, slug, card.dataset.kpiKey);
+      });
+    });
   }
 
   if (payload.data && payload.data.disabled) {
@@ -175,6 +182,40 @@ function _applyFilters(slug, items) {
 
 // Per-slug selected view ("table" | "grid" | …). Default: first supported.
 const activeViews = {};
+
+// KPI cards that act as one-click filters: clicking BAND 5 shows only the
+// 5 GHz clients, POOR SIGNAL shows only poor-quality clients, etc.
+// Clicking the same card again clears that filter.
+const KPI_FILTER_MAP = {
+  clients: {
+    band_2_4: { band: "2.4 GHz" },
+    band_5: { band: "5 GHz" },
+    band_6: { band: "6 GHz" },
+    poor_signal: { quality: "poor" },
+    total: {},                       // clears all filters
+  },
+};
+
+function applyKpiFilter(root, slug, kpiKey) {
+  const mapping = (KPI_FILTER_MAP[slug] || {})[kpiKey];
+  if (mapping === undefined) return;
+  const filters = activeFilters[slug] = activeFilters[slug] || {};
+  const entries = Object.entries(mapping);
+  if (!entries.length) {
+    // "total" card: clear everything.
+    Object.keys(filters).forEach(k => { filters[k] = ""; });
+  } else {
+    entries.forEach(([key, value]) => {
+      filters[key] = filters[key] === value ? "" : value;  // toggle
+    });
+  }
+  // Reflect into the visible filter controls so the UI stays consistent.
+  root.querySelectorAll("[data-filter-key]").forEach(ctrl => {
+    const key = ctrl.dataset.filterKey;
+    if (key in filters && ctrl.tagName === "SELECT") ctrl.value = filters[key] || "";
+  });
+  renderData(root, slug, moduleSpecs[slug] || {}, lastItems[slug] || []);
+}
 
 function renderData(root, slug, spec, items) {
   const view = activeViews[slug] ||
