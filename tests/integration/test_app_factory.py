@@ -1,4 +1,5 @@
-import sys, pathlib
+import sys
+import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent / "RUCKUS"))
 from ruckus_dashboard.app import create_app
 

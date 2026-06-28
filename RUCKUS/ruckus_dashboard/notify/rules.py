@@ -6,7 +6,6 @@ threshold upward relative to the previous check (no repeat spam while a
 condition persists at the same level)."""
 from __future__ import annotations
 
-from typing import Any
 
 
 def evaluate(prev: dict | None, current: dict,

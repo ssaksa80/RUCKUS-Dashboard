@@ -1,4 +1,3 @@
-import json
 from ruckus_dashboard.app import create_app
 from ruckus_dashboard.auth.session_store import ConnectionConfig
 

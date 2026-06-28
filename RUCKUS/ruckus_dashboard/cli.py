@@ -222,13 +222,20 @@ def main(argv: list[str] | None = None) -> None:
     if args.dump:
         sys.exit(_run_dump_mode(args))
     overrides: dict[str, Any] = {}
-    if args.bind: overrides["APP_HOST"] = args.bind
-    if args.port is not None: overrides["APP_PORT"] = args.port
-    if args.smartzone_port is not None: overrides["RUCKUS_SMARTZONE_PORT"] = args.smartzone_port
-    if args.no_browser: overrides["APP_OPEN_BROWSER"] = False
-    if args.no_auto_port: overrides["APP_AUTO_PORT"] = False
-    if args.allowed_hosts is not None: overrides["RUCKUS_ALLOWED_HOSTS"] = args.allowed_hosts
-    if args.debug: overrides["RUCKUS_SHOW_DEBUG"] = True
+    if args.bind:
+        overrides["APP_HOST"] = args.bind
+    if args.port is not None:
+        overrides["APP_PORT"] = args.port
+    if args.smartzone_port is not None:
+        overrides["RUCKUS_SMARTZONE_PORT"] = args.smartzone_port
+    if args.no_browser:
+        overrides["APP_OPEN_BROWSER"] = False
+    if args.no_auto_port:
+        overrides["APP_AUTO_PORT"] = False
+    if args.allowed_hosts is not None:
+        overrides["RUCKUS_ALLOWED_HOSTS"] = args.allowed_hosts
+    if args.debug:
+        overrides["RUCKUS_SHOW_DEBUG"] = True
 
     app = create_app(overrides or None)
     bind_host = app.config["APP_HOST"]

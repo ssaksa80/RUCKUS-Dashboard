@@ -1,6 +1,5 @@
 import time
-import pytest
-from ruckus_dashboard.infra.parallel_fetch import ParallelFetcher, TaskResult
+from ruckus_dashboard.infra.parallel_fetch import ParallelFetcher
 
 
 def test_runs_all_tasks_returns_results_keyed_by_id():

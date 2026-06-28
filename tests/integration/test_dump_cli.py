@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 import responses
 
 from ruckus_dashboard.cli import _run_dump_mode, _parse_args

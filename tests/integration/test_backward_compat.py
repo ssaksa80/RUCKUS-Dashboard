@@ -1,4 +1,5 @@
-import subprocess, sys
+import subprocess
+import sys
 
 
 def test_legacy_script_still_runnable():
@@ -12,7 +13,8 @@ def test_legacy_script_still_runnable():
 
 
 def test_legacy_main_importable():
-    import importlib.util, pathlib
+    import importlib.util
+    import pathlib
     spec = importlib.util.spec_from_file_location(
         "ruckus_dashboard_shim",
         pathlib.Path("RUCKUS/ruckus_dashboard.py"),

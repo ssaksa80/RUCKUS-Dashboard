@@ -11,7 +11,9 @@ def test_main_entrypoint_exists():
 
 def test_legacy_shim_still_works():
     # Top-level ruckus_dashboard.py module must still expose main()
-    import importlib.util, pathlib, sys
+    import importlib.util
+    import pathlib
+    import sys
     shim_path = pathlib.Path("RUCKUS/ruckus_dashboard.py")
     spec = importlib.util.spec_from_file_location("ruckus_dashboard_shim", shim_path)
     mod = importlib.util.module_from_spec(spec)

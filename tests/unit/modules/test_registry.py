@@ -50,7 +50,10 @@ def test_registry_has_all_modules_with_real_fetchers():
 def test_all_modules_registered_in_fresh_process():
     """Guard against a module file existing but missing from the package's
     import list — in-process tests mask that by importing modules directly."""
-    import os, subprocess, sys, pathlib
+    import os
+    import subprocess
+    import sys
+    import pathlib
     pkg_root = str(pathlib.Path("RUCKUS").resolve())
     out = subprocess.run(
         [sys.executable, "-c",

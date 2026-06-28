@@ -1,4 +1,5 @@
-import json, pathlib
+import json
+import pathlib
 import responses
 from ruckus_dashboard.auth.session_store import ConnectionConfig
 from ruckus_dashboard.modules._base import FetcherContext

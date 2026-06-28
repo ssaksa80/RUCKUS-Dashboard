@@ -1,4 +1,5 @@
-import subprocess, sys
+import subprocess
+import sys
 
 def test_module_runnable():
     """python -m ruckus_dashboard --version exits 0."""

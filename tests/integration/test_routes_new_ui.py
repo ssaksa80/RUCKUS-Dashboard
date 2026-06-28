@@ -95,7 +95,6 @@ def test_tab_route_unknown_module_404():
 
 
 def test_tab_route_unknown_tab_404():
-    import dataclasses
     app, cid, modmod = _authed_app_with_conn()
     with app.test_client() as c:
         with c.session_transaction() as s:

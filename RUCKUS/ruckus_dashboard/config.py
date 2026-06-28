@@ -1,6 +1,7 @@
 """Config builder + env parsers. Lifted from the monolith; new flags added."""
 from __future__ import annotations
-import os, secrets
+import os
+import secrets
 from datetime import timedelta
 from pathlib import Path
 

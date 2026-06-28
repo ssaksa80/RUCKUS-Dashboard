@@ -1,6 +1,6 @@
 import pytest
 from ruckus_dashboard.modules._base import (
-    ModuleSpec, TabSpec, FetcherContext, Column, Filter,
+    ModuleSpec, Column, Filter,
 )
 
 def noop_fetcher(ctx): return {"items": []}

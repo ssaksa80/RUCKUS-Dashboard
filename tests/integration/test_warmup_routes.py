@@ -49,7 +49,6 @@ def test_status_reflects_scheduler_snapshot():
         assert body["states"]["wlans"]["summary"] == {"total": 12}
 
 
-import time
 
 def test_sse_endpoint_streams_events():
     app = _make_authed_app()

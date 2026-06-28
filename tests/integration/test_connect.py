@@ -6,7 +6,6 @@ without speaking to a controller.
 """
 from __future__ import annotations
 
-import pytest
 
 from ruckus_dashboard.app import create_app
 from ruckus_dashboard.auth.session_store import ConnectionConfig

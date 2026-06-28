@@ -1,4 +1,9 @@
-import socket, ssl, subprocess, sys, time, urllib.request
+import socket
+import ssl
+import subprocess
+import sys
+import time
+import urllib.request
 
 def _wait_port(host, port, timeout=10):
     deadline = time.time() + timeout
@@ -23,7 +28,8 @@ def test_app_boots_and_serves_healthz(tmp_path):
         deadline = time.time() + 10
         while time.time() < deadline:
             line = proc.stdout.readline()
-            if not line: break
+            if not line:
+                break
             if "Opening dashboard:" in line:
                 port = int(line.rsplit(":", 1)[1].strip())
                 break
@@ -41,7 +47,13 @@ def test_app_boots_and_serves_healthz(tmp_path):
 
 def test_warmup_status_endpoint_reachable_when_unauthenticated(tmp_path):
     """Boot CLI, hit /api/warmup/status — expect 401 (proves blueprint registered)."""
-    import subprocess, sys, socket, time, ssl, urllib.request, urllib.error
+    import subprocess
+    import sys
+    import socket
+    import time
+    import ssl
+    import urllib.request
+    import urllib.error
     proc = subprocess.Popen(
         [sys.executable, "-m", "ruckus_dashboard",
          "--bind", "127.0.0.1", "--port", "0", "--no-browser"],
@@ -53,7 +65,8 @@ def test_warmup_status_endpoint_reachable_when_unauthenticated(tmp_path):
         deadline = time.time() + 10
         while time.time() < deadline:
             line = proc.stdout.readline()
-            if not line: break
+            if not line:
+                break
             if "Opening dashboard:" in line:
                 port = int(line.rsplit(":", 1)[1].strip())
                 break

@@ -1,8 +1,12 @@
+import pytest
 import responses
 from ruckus_dashboard.auth.session_store import ConnectionConfig
+from ruckus_dashboard.clients.base import RuckusClientError
 from ruckus_dashboard.clients.switchm import (
     fetch_switches,
+    switch_api_bases,
     switch_manager_base,
+    switch_manager_post,
     switch_query_payload,
 )
 
@@ -64,9 +68,6 @@ def test_fetch_switches_paged():
 
 
 # ─── base fallback + error surfacing (live SmartZone 7.x: switch ops on wsg base) ───
-import pytest
-from ruckus_dashboard.clients.base import RuckusClientError
-from ruckus_dashboard.clients.switchm import switch_api_bases, switch_manager_post
 
 
 def test_switch_api_bases_order():

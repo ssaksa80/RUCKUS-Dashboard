@@ -1,4 +1,3 @@
-import os
 from ruckus_dashboard.config import build_config, _bool_env, _int_env
 
 

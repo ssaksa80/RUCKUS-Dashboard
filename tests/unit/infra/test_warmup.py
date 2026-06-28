@@ -1,7 +1,7 @@
 import time
 from dataclasses import dataclass
-from ruckus_dashboard.infra.warmup import WarmupScheduler, WarmupStatus
-from ruckus_dashboard.modules._base import ModuleSpec, FetcherContext
+from ruckus_dashboard.infra.warmup import WarmupScheduler
+from ruckus_dashboard.modules._base import ModuleSpec
 
 
 @dataclass

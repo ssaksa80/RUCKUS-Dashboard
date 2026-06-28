@@ -141,7 +141,8 @@ def test_poor_ap_rule_fires_for_new_aps_only():
 # ── excel report ─────────────────────────────────────────────────────────
 
 def test_build_report_loads_and_has_sheets_and_charts():
-    import openpyxl, io
+    import openpyxl
+    import io
     data = {
         "aps": [{"name": "AP1", "zone": "HQ", "status": "online", "mac": "a"},
                 {"name": "AP2", "zone": "HQ", "status": "offline", "mac": "b"}],

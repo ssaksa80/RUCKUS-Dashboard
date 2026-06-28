@@ -1,4 +1,5 @@
-import sys, pathlib
+import sys
+import pathlib
 import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "RUCKUS"))
