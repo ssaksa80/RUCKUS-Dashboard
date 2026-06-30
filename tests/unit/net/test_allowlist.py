@@ -49,3 +49,19 @@ def test_disallowed_raises(fake_dns):
     al = HostAllowList("sz.example.com")
     with pytest.raises(RuckusClientError):
         assert_host_allowed("evil.example.com", {"RUCKUS_HOST_ALLOWLIST": al})
+
+
+def test_loopback_bind_allows_empty_allowlist():
+    from ruckus_dashboard.net.allowlist import require_allowlist_for_bind
+    require_allowlist_for_bind("127.0.0.1", HostAllowList(""))   # no raise
+
+
+def test_non_loopback_bind_requires_allowlist():
+    from ruckus_dashboard.net.allowlist import require_allowlist_for_bind
+    with pytest.raises(RuntimeError, match="RUCKUS_ALLOWED_HOSTS"):
+        require_allowlist_for_bind("0.0.0.0", HostAllowList(""))
+
+
+def test_non_loopback_bind_ok_when_allowlist_configured():
+    from ruckus_dashboard.net.allowlist import require_allowlist_for_bind
+    require_allowlist_for_bind("0.0.0.0", HostAllowList("10.0.0.0/8"))   # no raise

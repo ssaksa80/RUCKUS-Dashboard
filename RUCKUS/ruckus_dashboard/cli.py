@@ -256,6 +256,9 @@ def main(argv: list[str] | None = None) -> None:
     if app.config["APP_OPEN_BROWSER"]:
         open_browser_once(url)
 
+    from .net.allowlist import require_allowlist_for_bind
+    require_allowlist_for_bind(bind_host, app.config.get("RUCKUS_HOST_ALLOWLIST"))
+
     try:
         app.run(host=bind_host, port=port,
                 ssl_context=(str(cert_file), str(key_file)),
