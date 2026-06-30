@@ -32,6 +32,13 @@ def _dpapi_available() -> bool:
     return sys.platform == "win32"
 
 
+def _dpapi_flags() -> int:
+    # Default LOCAL_MACHINE (back-compat: any local user/service can decrypt).
+    # Set RUCKUS_DPAPI_SCOPE=user to scope secrets to the current user account.
+    scope = (os.getenv("RUCKUS_DPAPI_SCOPE", "machine") or "machine").strip().lower()
+    return 0 if scope == "user" else _CRYPTPROTECT_LOCAL_MACHINE
+
+
 if sys.platform == "win32":
     class _DATA_BLOB(ctypes.Structure):
         _fields_ = [("cbData", ctypes.c_uint), ("pbData", ctypes.c_void_p)]
@@ -43,7 +50,7 @@ def _dpapi_protect(data: bytes) -> bytes:
     blob_out = _DATA_BLOB()
     ok = ctypes.windll.crypt32.CryptProtectData(
         ctypes.byref(blob_in), None, None, None, None,
-        _CRYPTPROTECT_LOCAL_MACHINE, ctypes.byref(blob_out),
+        _dpapi_flags(), ctypes.byref(blob_out),
     )
     if not ok:
         raise OSError("CryptProtectData failed")
@@ -59,7 +66,7 @@ def _dpapi_unprotect(blob: bytes) -> bytes:
     blob_out = _DATA_BLOB()
     ok = ctypes.windll.crypt32.CryptUnprotectData(
         ctypes.byref(blob_in), None, None, None, None,
-        _CRYPTPROTECT_LOCAL_MACHINE, ctypes.byref(blob_out),
+        _dpapi_flags(), ctypes.byref(blob_out),
     )
     if not ok:
         raise OSError("CryptUnprotectData failed")
