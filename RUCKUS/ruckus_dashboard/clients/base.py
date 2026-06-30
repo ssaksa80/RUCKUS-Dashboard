@@ -231,7 +231,9 @@ def request_json(
     timeout = float(config["RUCKUS_TIMEOUT_SECONDS"])
     debug: dict[str, Any] = {"label": debug_label, "url": _safe_url(url), "status": None}
     try:
-        response = requests.request(method, url, timeout=timeout, **kwargs)
+        # SSRF guard: the allow-list is checked on the initial host only, so a 3xx
+        # must not be auto-followed to an unchecked host. RUCKUS APIs never redirect.
+        response = requests.request(method, url, timeout=timeout, allow_redirects=False, **kwargs)
         debug["status"] = response.status_code
         debug["raw"] = response.text[: int(config["RUCKUS_DEBUG_BYTES"])]
         if response.status_code not in expected_status:
