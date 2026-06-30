@@ -78,7 +78,7 @@ def module_data(slug: str):
     if not pairs:
         return jsonify({"error": "Connection expired. Please reconnect.", "reauth": True}), 401
 
-    gate = CapabilityGate(available=getattr(current_app, "available_ops", set()))
+    gate = CapabilityGate(available=current_app.capability_registry.get_for(conn_ids))
     if not gate.satisfied(spec.requires_capabilities):
         env = build_envelope(
             data={"items": [], "disabled": True,
@@ -136,7 +136,7 @@ def module_drill(slug: str, entity_id: str):
     if not pairs:
         return jsonify({"error": "Connection expired.", "reauth": True}), 401
 
-    gate = CapabilityGate(available=getattr(current_app, "available_ops", set()))
+    gate = CapabilityGate(available=current_app.capability_registry.get_for(conn_ids))
     filters = request.args.to_dict()
     _, conn = pairs[0]
     ctx = FetcherContext(connection=conn, config=dict(current_app.config),
@@ -167,7 +167,7 @@ def module_drill_tab(slug: str, entity_id: str, tab_slug: str):
     if not pairs:
         return jsonify({"error": "Connection expired.", "reauth": True}), 401
 
-    gate = CapabilityGate(available=getattr(current_app, "available_ops", set()))
+    gate = CapabilityGate(available=current_app.capability_registry.get_for(conn_ids))
     filters = request.args.to_dict()
     _, conn = pairs[0]
     ctx = FetcherContext(connection=conn, config=dict(current_app.config),

@@ -139,8 +139,10 @@ def _authed_app_with_conn():
         verify_tls=False, token_expires_at=9999999999,
     )
     cid = app.connection_store.put(conn)
-    # Satisfy capability gate for every module under test
-    app.available_ops = {("POST", "/query/client"), ("POST", "/query/roguesInfoList")}
+    # Satisfy capability gate for every module under test (this connection only)
+    app.capability_registry.set_for(
+        cid, {("POST", "/query/client"), ("POST", "/query/roguesInfoList")}
+    )
     return app, cid, modmod
 
 
@@ -190,7 +192,6 @@ def test_module_data_partial_when_one_of_two_controllers_fails():
     import ruckus_dashboard.modules as modmod
 
     app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
-    app.available_ops = {("POST", "/query/client")}
     good = ConnectionConfig(platform="smartzone", api_base="https://a/wsg/api/public",
                             display_name="SZ-A", auth_token="t", api_version="v11_0",
                             verify_tls=False, token_expires_at=9999999999)
@@ -199,6 +200,9 @@ def test_module_data_partial_when_one_of_two_controllers_fails():
                            verify_tls=False, token_expires_at=9999999999)
     cid_a = app.connection_store.put(good)
     cid_b = app.connection_store.put(bad)
+    # Both controllers expose the gated op; the session unions over both ids.
+    app.capability_registry.set_for(cid_a, {("POST", "/query/client")})
+    app.capability_registry.set_for(cid_b, {("POST", "/query/client")})
 
     def flaky(ctx):
         if ctx.connection.display_name == "SZ-B":

@@ -135,7 +135,6 @@ def test_connect_post_invalid_platform_flashes_and_redirects():
 # ─────────────────────────────────────────────────────────────────────────────
 def test_logout_clears_session(monkeypatch):
     app = make_app()
-    app.available_ops = {("GET", "/rkszones")}
     with app.test_client() as c:
         # seed an authenticated session
         conn = ConnectionConfig(
@@ -147,6 +146,7 @@ def test_logout_clears_session(monkeypatch):
             api_version="v9_0",
         )
         cid = app.connection_store.put(conn)
+        app.capability_registry.set_for(cid, {("GET", "/rkszones")})
         token = seed_csrf(c)
         with c.session_transaction() as s:
             s["auth"] = True
@@ -162,7 +162,8 @@ def test_logout_clears_session(monkeypatch):
             assert not s.get("auth")
             assert not s.get("connection_ids")
         assert app.connection_store.count() == 0
-        assert app.available_ops == set()
+        # logout clears this connection's capabilities from the registry
+        assert app.capability_registry.get_for([cid]) == set()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
