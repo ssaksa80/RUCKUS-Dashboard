@@ -30,14 +30,18 @@ class TabSpec:
 class Column:
     label: str
     key: str
-    kind: str = "text"     # text | status | bytes | uptime | number | link
+    kind: str = "text"          # text | status | bytes | uptime | number | link | rate
+    filterable: bool = True     # set False to suppress a filter for this column
+    filter_kind: str | None = None    # override inferred control: select|search|range|none
+    server_filter: str | None = None  # push-down token, e.g. "ZONE_ID"; None = client-only
 
 
 @dataclass(frozen=True)
 class Filter:
     key: str
     label: str
-    kind: str = "select"   # select | search
+    kind: str = "select"        # select | search | range
+    server_filter: str | None = None
 
 
 @dataclass(frozen=True)

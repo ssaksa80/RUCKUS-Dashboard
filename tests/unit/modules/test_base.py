@@ -121,3 +121,29 @@ def test_column_defaults_text_kind():
 def test_filter_defaults_select_kind():
     f = Filter("zone", "Zone")
     assert f.kind == "select"
+
+
+def test_column_filter_metadata_defaults():
+    c = Column("Name", "name")
+    assert c.filterable is True
+    assert c.filter_kind is None
+    assert c.server_filter is None
+
+
+def test_column_filter_metadata_overrides():
+    c = Column("Zone", "zone", "text", filter_kind="select", server_filter="ZONE_ID")
+    assert c.filterable is True
+    assert c.filter_kind == "select"
+    assert c.server_filter == "ZONE_ID"
+
+
+def test_column_suppressed_when_not_filterable():
+    c = Column("Raw", "raw", filterable=False)
+    assert c.filterable is False
+
+
+def test_filter_carries_server_filter_default_none():
+    f = Filter("status", "Status", "select")
+    assert f.server_filter is None
+    f2 = Filter("zone", "Zone", "select", server_filter="ZONE_ID")
+    assert f2.server_filter == "ZONE_ID"
