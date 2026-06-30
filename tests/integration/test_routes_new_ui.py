@@ -184,6 +184,65 @@ def test_module_data_fetcher_error_returns_envelope_not_500():
         modmod.MODULES["clients"] = original
 
 
+def test_drill_error_hidden_unless_debug():
+    """Drill endpoint must gate raw upstream body behind RUCKUS_SHOW_DEBUG.
+
+    With RUCKUS_SHOW_DEBUG=True the _upstream_message helper appends the raw
+    controller body to the error string.  With RUCKUS_SHOW_DEBUG=False it must
+    NOT appear.  Before the fix the drill handlers bypassed _upstream_message
+    entirely (using str(exc)), so enabling debug mode had no effect.
+    """
+    import dataclasses
+    from ruckus_dashboard.clients.base import RuckusClientError
+    import ruckus_dashboard.modules as modmod
+    from ruckus_dashboard.modules import MODULES
+
+    # --- RUCKUS_SHOW_DEBUG=True: raw body should appear in error ---
+    app_dbg, cid_dbg, _ = _authed_app_with_conn()
+    app_dbg.config["RUCKUS_SHOW_DEBUG"] = True
+
+    spec_slug = next(slug for slug, s in MODULES.items() if s.drill_fetcher is not None)
+    original = MODULES[spec_slug]
+
+    def boom(ctx, entity_id):
+        raise RuckusClientError("upstream failed", 502, {"raw": "SECRET-INTERNAL-BODY"})
+
+    modmod.MODULES[spec_slug] = dataclasses.replace(original, drill_fetcher=boom)
+    try:
+        client = app_dbg.test_client()
+        with client.session_transaction() as s:
+            s["auth"] = True
+            s["connection_ids"] = [cid_dbg]
+        r = client.get(f"/api/modules/{spec_slug}/some-id")
+        body = r.get_json()
+        # In debug mode the raw body MUST be present in the error string
+        assert "SECRET-INTERNAL-BODY" in (body.get("error") or ""), (
+            "RUCKUS_SHOW_DEBUG=True: expected raw body in error; "
+            f"got: {body.get('error')!r}"
+        )
+    finally:
+        modmod.MODULES[spec_slug] = original
+
+    # --- RUCKUS_SHOW_DEBUG=False: raw body must be hidden ---
+    app_prod, cid_prod, _ = _authed_app_with_conn()
+    app_prod.config["RUCKUS_SHOW_DEBUG"] = False
+
+    modmod.MODULES[spec_slug] = dataclasses.replace(original, drill_fetcher=boom)
+    try:
+        client2 = app_prod.test_client()
+        with client2.session_transaction() as s:
+            s["auth"] = True
+            s["connection_ids"] = [cid_prod]
+        r2 = client2.get(f"/api/modules/{spec_slug}/some-id")
+        body2 = r2.get_json()
+        assert "SECRET-INTERNAL-BODY" not in (body2.get("error") or ""), (
+            "RUCKUS_SHOW_DEBUG=False: raw body must not appear in error; "
+            f"got: {body2.get('error')!r}"
+        )
+    finally:
+        modmod.MODULES[spec_slug] = original
+
+
 def test_module_data_partial_when_one_of_two_controllers_fails():
     """With 2 controllers, one OK + one failing → status 'partial', data kept."""
     import dataclasses

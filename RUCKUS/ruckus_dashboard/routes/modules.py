@@ -144,8 +144,12 @@ def module_drill(slug: str, entity_id: str):
                          connection_label=conn.display_name)
     try:
         data = spec.drill_fetcher(ctx, entity_id)
-    except Exception as exc:
-        return jsonify({"error": str(exc), "slug": slug, "entity_id": entity_id}), 502
+    except RuckusClientError as exc:
+        return jsonify({"error": _upstream_message(exc), "slug": slug, "entity_id": entity_id}), exc.status_code
+    except Exception as exc:  # noqa: BLE001
+        LOG.exception("drill '%s' crashed on %s", slug, entity_id)
+        msg = str(exc) if current_app.config.get("RUCKUS_SHOW_DEBUG") else "Drill-in failed."
+        return jsonify({"error": msg, "slug": slug, "entity_id": entity_id}), 502
     env = build_envelope(data=data, summary={}, errors=[])
     return jsonify(env)
 
@@ -180,7 +184,12 @@ def module_drill_tab(slug: str, entity_id: str, tab_slug: str):
         return jsonify({"error": "Module has no drill-in.", "slug": slug}), 404
     try:
         data = fetcher(ctx, entity_id)
-    except Exception as exc:
-        return jsonify({"error": str(exc), "slug": slug,
+    except RuckusClientError as exc:
+        return jsonify({"error": _upstream_message(exc), "slug": slug,
+                        "entity_id": entity_id, "tab": tab_slug}), exc.status_code
+    except Exception as exc:  # noqa: BLE001
+        LOG.exception("drill '%s' crashed on %s", slug, entity_id)
+        msg = str(exc) if current_app.config.get("RUCKUS_SHOW_DEBUG") else "Drill-in failed."
+        return jsonify({"error": msg, "slug": slug,
                         "entity_id": entity_id, "tab": tab_slug}), 502
     return jsonify(build_envelope(data=data, summary={}, errors=[]))
