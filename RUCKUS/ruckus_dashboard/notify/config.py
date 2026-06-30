@@ -64,6 +64,10 @@ def save_config(instance_path: str, incoming: dict, secrets) -> dict:
     path = _path(instance_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(merged, indent=1), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
     return merged
 
 

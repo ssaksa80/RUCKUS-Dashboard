@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -64,7 +65,13 @@ class ProfileStore:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(profiles, separators=(",", ":")), encoding="utf-8")
+            data = json.dumps(profiles, separators=(",", ":"))
+            _binary = getattr(os, "O_BINARY", 0)  # Windows: prevent \n→\r\n translation
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _binary, 0o600)
+            try:
+                os.write(fd, data.encode("utf-8"))
+            finally:
+                os.close(fd)
             tmp.replace(self.path)
             try:
                 self.path.chmod(0o600)
