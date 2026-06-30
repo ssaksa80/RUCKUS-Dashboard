@@ -44,10 +44,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                                            app.secrets_manager)
     app.notify_scheduler.start()
     app.inflight = InFlightDeduper()
-    # Capability discovery populates this set on connect; modules consult it
-    # via CapabilityGate. Initialised empty so unauthenticated requests don't
-    # AttributeError before any controller is reachable.
-    app.available_ops = set()
+    # Capability discovery populates this per-connection on connect; modules
+    # consult it via CapabilityGate keyed by the session's connection ids. A
+    # registry (not a process-global set) so concurrent operators on different
+    # controllers don't leak ops into — or wipe gating from — each other.
+    from .infra.capability_registry import CapabilityRegistry
+    app.capability_registry = CapabilityRegistry()
 
     from .routes.modules import bp as modules_bp
     app.register_blueprint(modules_bp)

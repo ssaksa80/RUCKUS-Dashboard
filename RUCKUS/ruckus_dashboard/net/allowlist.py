@@ -80,6 +80,34 @@ class HostAllowList:
         return all(ip in self.pinned_ips or self._ip_in_networks(ip) for ip in resolved)
 
 
+def is_loopback(host: str) -> bool:
+    h = (host or "").strip().lower().strip("[]").strip()
+    if not h:                      # blank/empty host is NOT loopback — fail loud
+        return False
+    if h == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def require_allowlist_for_bind(host: str, allowlist: "HostAllowList | None") -> None:
+    """Fail fast on a non-loopback bind with no SSRF allow-list configured.
+
+    Loopback binds (127.0.0.1/::1/localhost) are dev-safe and allowed empty.
+    Any other interface without RUCKUS_ALLOWED_HOSTS is refused — the server
+    must not be usable as an open SSRF proxy to internal hosts.
+    """
+    if is_loopback(host):
+        return
+    if allowlist is None or not allowlist.enabled:
+        raise RuntimeError(
+            "Refusing to bind to a non-loopback interface without RUCKUS_ALLOWED_HOSTS. "
+            "Set RUCKUS_ALLOWED_HOSTS (CSV of hosts/CIDRs) or bind to 127.0.0.1."
+        )
+
+
 def assert_host_allowed(host: str, config: dict[str, Any]) -> None:
     allowlist = config.get("RUCKUS_HOST_ALLOWLIST")
     if allowlist is not None and not allowlist.host_allowed(host):

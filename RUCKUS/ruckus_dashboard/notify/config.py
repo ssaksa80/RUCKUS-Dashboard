@@ -53,8 +53,15 @@ def save_config(instance_path: str, incoming: dict, secrets) -> dict:
     ``incoming["smtp"]["password"]`` (plaintext) is encrypted; the mask keeps
     the previously stored secret."""
     current = load_config(instance_path)
-    merged = _merged({**current, **{k: v for k, v in incoming.items()
-                                    if isinstance(v, dict)}})
+    sections = {}
+    for k, v in current.items():
+        sections[k] = dict(v) if isinstance(v, dict) else v
+    for k, v in incoming.items():
+        if isinstance(v, dict) and isinstance(sections.get(k), dict):
+            sections[k].update(v)
+        elif isinstance(v, dict):
+            sections[k] = dict(v)
+    merged = _merged(sections)
     pw = (incoming.get("smtp") or {}).get("password")
     if pw and pw != PASSWORD_MASK:
         merged["smtp"]["password_enc"] = secrets.encrypt(pw)
@@ -64,6 +71,10 @@ def save_config(instance_path: str, incoming: dict, secrets) -> dict:
     path = _path(instance_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(merged, indent=1), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
     return merged
 
 

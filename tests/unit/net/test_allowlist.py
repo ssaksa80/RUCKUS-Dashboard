@@ -2,7 +2,7 @@ import pytest
 
 from ruckus_dashboard.clients.base import RuckusClientError
 from ruckus_dashboard.net import allowlist as allowlist_mod
-from ruckus_dashboard.net.allowlist import HostAllowList, assert_host_allowed
+from ruckus_dashboard.net.allowlist import HostAllowList, assert_host_allowed, is_loopback, require_allowlist_for_bind
 
 
 @pytest.fixture
@@ -49,3 +49,44 @@ def test_disallowed_raises(fake_dns):
     al = HostAllowList("sz.example.com")
     with pytest.raises(RuckusClientError):
         assert_host_allowed("evil.example.com", {"RUCKUS_HOST_ALLOWLIST": al})
+
+
+def test_loopback_bind_allows_empty_allowlist():
+    from ruckus_dashboard.net.allowlist import require_allowlist_for_bind
+    require_allowlist_for_bind("127.0.0.1", HostAllowList(""))   # no raise
+
+
+def test_non_loopback_bind_requires_allowlist():
+    from ruckus_dashboard.net.allowlist import require_allowlist_for_bind
+    with pytest.raises(RuntimeError, match="RUCKUS_ALLOWED_HOSTS"):
+        require_allowlist_for_bind("0.0.0.0", HostAllowList(""))
+
+
+def test_non_loopback_bind_ok_when_allowlist_configured():
+    from ruckus_dashboard.net.allowlist import require_allowlist_for_bind
+    require_allowlist_for_bind("0.0.0.0", HostAllowList("10.0.0.0/8"))   # no raise
+
+
+def test_is_loopback_true_cases():
+    for h in ("127.0.0.1", "::1", "[::1]", "localhost", "LOCALHOST"):
+        assert is_loopback(h) is True, h
+
+
+def test_is_loopback_blank_is_not_loopback():
+    assert is_loopback("") is False
+    assert is_loopback("   ") is False
+    assert is_loopback("[]") is False
+
+
+def test_is_loopback_non_loopback():
+    for h in ("0.0.0.0", "10.0.0.5", "example.com", "::"):
+        assert is_loopback(h) is False, h
+
+
+def test_require_allowlist_for_bind_none_allowlist_non_loopback_raises():
+    with pytest.raises(RuntimeError, match="RUCKUS_ALLOWED_HOSTS"):
+        require_allowlist_for_bind("0.0.0.0", None)
+
+
+def test_require_allowlist_for_bind_none_allowlist_loopback_ok():
+    require_allowlist_for_bind("127.0.0.1", None)   # loopback: no allowlist needed, no raise

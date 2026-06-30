@@ -1,11 +1,15 @@
 """Unit tests for notification config, rules, mailer, scheduler due-logic,
 and the Excel report builder."""
 import json
+import os
+import stat
+import sys
 import time
 
 import pytest
 
 from ruckus_dashboard.notify import config as cfg_mod
+from ruckus_dashboard.notify.config import save_config, _path
 from ruckus_dashboard.notify.rules import evaluate
 from ruckus_dashboard.notify.scheduler import NotifyScheduler, state_from_data
 from ruckus_dashboard.reports.excel import build_report
@@ -21,6 +25,16 @@ class FakeSecrets:
 
 
 # ── config ───────────────────────────────────────────────────────────────
+
+def test_notifications_file_is_chmod_600(tmp_path):
+    class _Sec:
+        def encrypt(self, s): return "enc:" + s
+    save_config(str(tmp_path), {"smtp": {"password": "pw"}}, _Sec())
+    p = _path(str(tmp_path))
+    assert p.exists()
+    if sys.platform != "win32":
+        assert stat.S_IMODE(os.stat(p).st_mode) == 0o600
+
 
 def test_config_password_encrypted_masked_and_preserved(tmp_path):
     secrets = FakeSecrets()
@@ -47,6 +61,20 @@ def test_config_defaults_when_missing(tmp_path):
     assert cfg["smtp"]["port"] == 587
     assert cfg["alerts"]["rules"]["critical_alarm"] is True
     assert cfg["report"]["time"] == "07:00"
+
+
+class _Sec2:
+    def encrypt(self, s): return "enc:" + s
+    def decrypt(self, s): return s
+
+
+def test_partial_post_preserves_other_subkeys(tmp_path):
+    save_config(str(tmp_path), {"report": {"enabled": True, "recipients": ["a@x"], "time": "06:00"}}, _Sec2())
+    save_config(str(tmp_path), {"report": {"enabled": False}}, _Sec2())
+    cfg = cfg_mod.load_config(str(tmp_path))
+    assert cfg["report"]["enabled"] is False
+    assert cfg["report"]["recipients"] == ["a@x"]
+    assert cfg["report"]["time"] == "06:00"
 
 
 # ── rules ────────────────────────────────────────────────────────────────

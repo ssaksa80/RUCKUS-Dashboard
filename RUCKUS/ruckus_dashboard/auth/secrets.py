@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -31,6 +32,13 @@ def _dpapi_available() -> bool:
     return sys.platform == "win32"
 
 
+def _dpapi_flags() -> int:
+    # Default LOCAL_MACHINE (back-compat: any local user/service can decrypt).
+    # Set RUCKUS_DPAPI_SCOPE=user to scope secrets to the current user account.
+    scope = (os.getenv("RUCKUS_DPAPI_SCOPE", "machine") or "machine").strip().lower()
+    return 0 if scope == "user" else _CRYPTPROTECT_LOCAL_MACHINE
+
+
 if sys.platform == "win32":
     class _DATA_BLOB(ctypes.Structure):
         _fields_ = [("cbData", ctypes.c_uint), ("pbData", ctypes.c_void_p)]
@@ -42,7 +50,7 @@ def _dpapi_protect(data: bytes) -> bytes:
     blob_out = _DATA_BLOB()
     ok = ctypes.windll.crypt32.CryptProtectData(
         ctypes.byref(blob_in), None, None, None, None,
-        _CRYPTPROTECT_LOCAL_MACHINE, ctypes.byref(blob_out),
+        _dpapi_flags(), ctypes.byref(blob_out),
     )
     if not ok:
         raise OSError("CryptProtectData failed")
@@ -58,7 +66,7 @@ def _dpapi_unprotect(blob: bytes) -> bytes:
     blob_out = _DATA_BLOB()
     ok = ctypes.windll.crypt32.CryptUnprotectData(
         ctypes.byref(blob_in), None, None, None, None,
-        _CRYPTPROTECT_LOCAL_MACHINE, ctypes.byref(blob_out),
+        _dpapi_flags(), ctypes.byref(blob_out),
     )
     if not ok:
         raise OSError("CryptUnprotectData failed")
@@ -87,7 +95,12 @@ def _write_protected_key(path: Path, key: bytes) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.parent / (path.name + ".tmp")
-        tmp.write_bytes(payload)
+        _binary = getattr(os, "O_BINARY", 0)  # Windows: prevent \n→\r\n translation
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _binary, 0o600)
+        try:
+            os.write(fd, payload)
+        finally:
+            os.close(fd)
         tmp.replace(path)
         try:
             path.chmod(0o600)
@@ -121,6 +134,9 @@ class SecretsManager:
             key = self._load_or_create_key()
             if key:
                 self._fernet = Fernet(key)
+        if self._fernet is None:
+            LOG.warning("cryptography unavailable or key unwritable; secrets will NOT be "
+                        "persisted (profile/SMTP passwords entered will be silently dropped).")
 
     def available(self) -> bool:
         return self._fernet is not None

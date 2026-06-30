@@ -3,9 +3,10 @@
 Ported from the monolith ``RUCKUS/ruckus_dashboard.py`` (connect ~3000-3052,
 logout ~3054-3065). Notable shape changes:
 
-* ``available_ops`` is wired here: on a successful SmartZone connect we run
-  ``capabilities.discover_capabilities`` and union its ``available_ops`` set
-  into ``current_app.available_ops`` so module routes can capability-gate.
+* Capabilities are wired here: on a successful SmartZone connect we run
+  ``capabilities.discover_capabilities`` and store its ``available_ops`` set
+  in ``current_app.capability_registry`` keyed by the new connection id, so
+  module routes can capability-gate per session (not via a shared global).
   Discovery failures (timeouts, 404s) flash a warning but don't block login.
 * No profile-save / multi-controller "add mode" yet — those are out of scope
   for the foundation login flow. The monolith semantics will be revisited
@@ -64,7 +65,7 @@ def connect():
     # Capability discovery (SmartZone only). Failures must not block login —
     # the dashboard still works with an empty ops set, modules just render
     # the disabled envelope until a controller surfaces the OpenAPI doc.
-    _refresh_available_ops(connection)
+    _refresh_available_ops(connection, new_id)
 
     from ..infra.warmup import WarmupScheduler
     from ..modules import MODULES
@@ -76,7 +77,7 @@ def connect():
         connection=connection,
         config=dict(current_app.config),
         modules=dict(MODULES),
-        available_ops=set(current_app.available_ops),
+        available_ops=current_app.capability_registry.get_for([new_id]),
         max_workers=int(current_app.config.get("RUCKUS_WARMUP_WORKERS", 4)),
         timeout=float(current_app.config.get("RUCKUS_WARMUP_TIMEOUT", 30.0)),
     )
@@ -100,6 +101,9 @@ def logout():
             except Exception:  # noqa: BLE001 — best-effort logout
                 LOG.warning("smartzone logout cleanup failed", exc_info=True)
         current_app.connection_store.remove(cid)
+        # Drop only this connection's capabilities; a concurrent operator on a
+        # different controller keeps their own gating intact.
+        current_app.capability_registry.clear(cid)
 
     if getattr(current_app, "warmup_scheduler", None) is not None:
         current_app.warmup_scheduler.cancel()
@@ -110,15 +114,15 @@ def logout():
     csrf_token = session.get("csrf_token", secrets.token_urlsafe(32))
     session.clear()
     session["csrf_token"] = csrf_token
-    current_app.available_ops = set()
     return redirect(url_for("pages.index"))
 
 
-def _refresh_available_ops(connection) -> None:
-    """Merge the new connection's OpenAPI ops into ``current_app.available_ops``.
+def _refresh_available_ops(connection, connection_id: str) -> None:
+    """Store the new connection's OpenAPI ops in the capability registry.
 
-    RUCKUS One has no public OpenAPI surface, so we skip discovery there and
-    leave that connection's contribution empty — module specs gated on
+    Keyed by ``connection_id`` so each session sees only its own controllers'
+    capabilities. RUCKUS One has no public OpenAPI surface, so we skip discovery
+    there and leave that connection's contribution empty — module specs gated on
     SmartZone capabilities will render the disabled envelope when only
     RUCKUS One is connected, which is correct.
     """
@@ -137,6 +141,4 @@ def _refresh_available_ops(connection) -> None:
         )
         return
     ops = caps.get("available_ops") or set()
-    if not hasattr(current_app, "available_ops") or current_app.available_ops is None:
-        current_app.available_ops = set()
-    current_app.available_ops = set(current_app.available_ops) | set(ops)
+    current_app.capability_registry.set_for(connection_id, set(ops))

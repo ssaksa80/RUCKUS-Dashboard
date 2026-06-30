@@ -34,16 +34,14 @@ class ParallelFetcher:
         if not tasks:
             return {}
         results: dict[str, TaskResult] = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers)
+        try:
             future_to_id = {pool.submit(fn): tid for tid, fn in tasks.items()}
-            done, not_done = concurrent.futures.wait(
-                future_to_id, timeout=self.timeout
-            )
+            done, not_done = concurrent.futures.wait(future_to_id, timeout=self.timeout)
             for future in done:
                 tid = future_to_id[future]
                 try:
-                    value = future.result()
-                    results[tid] = TaskResult(ok=True, value=value)
+                    results[tid] = TaskResult(ok=True, value=future.result())
                 except BaseException as exc:  # noqa: BLE001
                     results[tid] = TaskResult(ok=False, error=exc)
             for future in not_done:
@@ -56,4 +54,7 @@ class ParallelFetcher:
                     ),
                     timed_out=True,
                 )
+        finally:
+            # Do not block on still-running stragglers (the old `with` __exit__ did).
+            pool.shutdown(wait=False, cancel_futures=True)
         return results
