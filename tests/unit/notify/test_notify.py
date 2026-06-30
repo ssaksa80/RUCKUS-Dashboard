@@ -63,6 +63,20 @@ def test_config_defaults_when_missing(tmp_path):
     assert cfg["report"]["time"] == "07:00"
 
 
+class _Sec2:
+    def encrypt(self, s): return "enc:" + s
+    def decrypt(self, s): return s
+
+
+def test_partial_post_preserves_other_subkeys(tmp_path):
+    save_config(str(tmp_path), {"report": {"enabled": True, "recipients": ["a@x"], "time": "06:00"}}, _Sec2())
+    save_config(str(tmp_path), {"report": {"enabled": False}}, _Sec2())
+    cfg = cfg_mod.load_config(str(tmp_path))
+    assert cfg["report"]["enabled"] is False
+    assert cfg["report"]["recipients"] == ["a@x"]
+    assert cfg["report"]["time"] == "06:00"
+
+
 # ── rules ────────────────────────────────────────────────────────────────
 
 def test_rules_fire_on_transition_only():
