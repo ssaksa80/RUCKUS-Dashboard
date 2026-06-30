@@ -48,3 +48,16 @@ def test_concurrent_execution_faster_than_sequential():
     pf.run({f"t{i}": busy for i in range(4)})
     elapsed = time.time() - start
     assert elapsed < 0.25
+
+
+def test_run_returns_promptly_despite_hung_task():
+    f = ParallelFetcher(max_workers=2, timeout=0.2)
+    def hang():
+        time.sleep(5)        # exceeds timeout
+        return "late"
+    started = time.monotonic()
+    results = f.run({"fast": lambda: "ok", "slow": hang})
+    elapsed = time.monotonic() - started
+    assert results["fast"].ok and results["fast"].value == "ok"
+    assert results["slow"].timed_out is True
+    assert elapsed < 2.0      # must NOT block ~5s on the straggler's shutdown(wait=True)
