@@ -81,8 +81,10 @@ class HostAllowList:
 
 
 def is_loopback(host: str) -> bool:
-    h = (host or "").strip().lower().strip("[]")
-    if h in {"localhost", ""}:
+    h = (host or "").strip().lower().strip("[]").strip()
+    if not h:                      # blank/empty host is NOT loopback — fail loud
+        return False
+    if h == "localhost":
         return True
     try:
         return ipaddress.ip_address(h).is_loopback

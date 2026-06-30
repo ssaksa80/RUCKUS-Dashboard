@@ -12,6 +12,7 @@ from typing import Any
 from . import APP_NAME, APP_VERSION
 from .app import create_app
 from .certs import ensure_self_signed_cert
+from .net.allowlist import require_allowlist_for_bind
 from .net.port_scan import select_dashboard_port, port_self_test_script_block
 from .config import DEFAULT_DASHBOARD_PORT, DEFAULT_SMARTZONE_API_PORT
 
@@ -239,6 +240,8 @@ def main(argv: list[str] | None = None) -> None:
 
     app = create_app(overrides or None)
     bind_host = app.config["APP_HOST"]
+    require_allowlist_for_bind(bind_host, app.config["RUCKUS_HOST_ALLOWLIST"])
+
     requested_port = int(app.config["APP_PORT"])
 
     print(port_self_test_script_block(bind_host, requested_port))
@@ -255,9 +258,6 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Opening dashboard: {url}")
     if app.config["APP_OPEN_BROWSER"]:
         open_browser_once(url)
-
-    from .net.allowlist import require_allowlist_for_bind
-    require_allowlist_for_bind(bind_host, app.config.get("RUCKUS_HOST_ALLOWLIST"))
 
     try:
         app.run(host=bind_host, port=port,
