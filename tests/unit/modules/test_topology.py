@@ -139,3 +139,16 @@ def test_port_flow_best_effort_and_shape():
 def test_port_flow_returns_empty_on_error():
     # No responses registered + connection refused → best-effort empty dict.
     assert topology_mod._port_flow(_ctx()) == {}
+
+
+def test_build_graph_accepts_and_emits_flow_key():
+    g = topology_mod._build_graph(CLUSTER, ZONES, APS, SWITCHES, {"s1": 1024},
+                                  port_flow={"S1": 4000000})
+    assert g["flow"] == {"S1": 4000000}
+    # envelope still intact
+    assert set(g) >= {"nodes", "edges", "legend", "items", "flow"}
+
+
+def test_build_graph_flow_defaults_empty():
+    g = topology_mod._build_graph(CLUSTER, ZONES, APS, SWITCHES, {})
+    assert g["flow"] == {}

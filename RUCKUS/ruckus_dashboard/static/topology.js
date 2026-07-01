@@ -446,7 +446,8 @@ function renderTopology(root, payload) {
   if (!vis.nodes.length) { canvas.innerHTML = `<p class="empty">No problems — all healthy.</p>`; updateStatusRibbon(root, nodes); return; }
   topoState.visEdges = vis.edges;
   if (topoState.view === "flow") {
-    canvas.innerHTML = renderFlow({ nodes: vis.nodes, edges: vis.edges }, topoState.rates);
+    const flowRates = (data.flow && Object.keys(data.flow).length) ? data.flow : topoState.rates;
+    canvas.innerHTML = renderFlow({ nodes: vis.nodes, edges: vis.edges }, flowRates);
     _wireTopo(root, canvas.querySelector("svg"));
     _renderTopoLegend(root, data.legend);
     return;

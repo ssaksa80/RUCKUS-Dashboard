@@ -40,6 +40,7 @@ def fetch(ctx: FetcherContext) -> dict[str, Any]:
     sw_resp = _safe(lambda: fetch_switches(ctx.connection, ctx.config)) or {}
     switches = sw_resp.get("switches") or []
     traffic_by_mac = _traffic_map(ctx)
+    port_flow = _port_flow(ctx)
     alarms_by_name = _alarm_counts(ctx)
     expand_raw = str((ctx.filters or {}).get("expand") or "")
     expand = {z for z in (p.strip() for p in expand_raw.split(",")) if z}
@@ -48,7 +49,7 @@ def fetch(ctx: FetcherContext) -> dict[str, Any]:
     rssi_by_ap = _rssi_by_ap(ctx) if expand else {}
     return _build_graph(cluster, zones, aps, switches, traffic_by_mac,
                         alarms_by_name=alarms_by_name, expand=expand,
-                        rssi_by_ap=rssi_by_ap)
+                        rssi_by_ap=rssi_by_ap, port_flow=port_flow)
 
 
 def _rssi_by_ap(ctx) -> dict[str, int]:
@@ -126,7 +127,8 @@ def _port_flow(ctx) -> dict:
 
 
 def _build_graph(cluster, zones, aps, switches, traffic_by_mac,
-                 alarms_by_name=None, expand=frozenset(), rssi_by_ap=None):
+                 alarms_by_name=None, expand=frozenset(), rssi_by_ap=None,
+                 port_flow=None):
     cluster = cluster or {}
     traffic_by_mac = traffic_by_mac or {}
     alarms_by_name = alarms_by_name or {}
@@ -226,7 +228,8 @@ def _build_graph(cluster, zones, aps, switches, traffic_by_mac,
                           "label": _human_bytes(bytes_) if bytes_ else ""})
 
     return {"nodes": nodes, "edges": edges,
-            "legend": {"status": STATUS_COLORS}, "items": []}
+            "legend": {"status": STATUS_COLORS}, "items": [],
+            "flow": port_flow or {}}
 
 
 def _human_bytes(n) -> str:
@@ -253,7 +256,7 @@ def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
     for r in results:
         if r.get("nodes"):
             return r
-    return {"nodes": [], "edges": [], "legend": {"status": STATUS_COLORS}, "items": []}
+    return {"nodes": [], "edges": [], "legend": {"status": STATUS_COLORS}, "items": [], "flow": {}}
 
 
 register(ModuleSpec(

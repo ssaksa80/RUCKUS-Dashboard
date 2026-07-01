@@ -219,3 +219,19 @@ def test_render_flow_escapes_node_labels():
     )
     assert got["noRaw"] is True
     assert got["hasEsc"] is True
+
+
+def test_render_flow_prefers_server_flow_over_rates():
+    # When renderFlow receives an explicit flow map, it uses those bps.
+    snippet = (
+        "const data={nodes:["
+        "{id:'g1',type:'group',status:'online',label:'Core',meta:{}},"
+        "{id:'s1',type:'switch',status:'online',label:'SW',meta:{}}],"
+        "edges:[{source:'g1',target:'s1',status:'online',label:''}]};"
+        "const a=T.renderFlow(data,{s1:1e3});"      # thin (rates)
+        "const b=T.renderFlow(data,{s1:1e9});"      # fat (server flow)
+        "const wa=parseFloat(a.match(/topo-flow-ribbon[^>]*stroke-width=\"([0-9.]+)\"/)[1]);"
+        "const wb=parseFloat(b.match(/topo-flow-ribbon[^>]*stroke-width=\"([0-9.]+)\"/)[1]);"
+        "console.log(JSON.stringify(wb>wa));"
+    )
+    assert _run(snippet) is True
