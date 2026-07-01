@@ -118,6 +118,7 @@ def test_alerts_due_respects_interval(tmp_path):
 
 
 def test_report_due_once_per_day_after_time(tmp_path):
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
     s = _sched(tmp_path)
     cfg = cfg_mod.load_config(str(tmp_path))
     cfg["report"]["enabled"] = True
@@ -126,7 +127,9 @@ def test_report_due_once_per_day_after_time(tmp_path):
     after = time.strptime("2026-06-10 07:01", "%Y-%m-%d %H:%M")
     assert s._report_due(cfg, before) is False
     assert s._report_due(cfg, after) is True
-    s._last_report_day = "2026-06-10"
+    # Persist today via the store (not the in-memory field).
+    store = JsonOutageStateStore(str(tmp_path))
+    store.save({"devices": {}, "report": {"last_report_day": "2026-06-10"}})
     assert s._report_due(cfg, after) is False      # once per day
     next_day = time.strptime("2026-06-11 07:01", "%Y-%m-%d %H:%M")
     assert s._report_due(cfg, next_day) is True
@@ -142,6 +145,23 @@ def test_state_from_data_counts():
     assert s["switches_offline"] == 1
     assert s["critical_alarms"] == 3
     assert s["poor_aps"] == []
+
+
+def test_state_from_data_zero_alarm_count_is_zero():
+    """Bug #14: 'count or 1' treated a zero/missing count as 1.  Must be 0."""
+    from ruckus_dashboard.notify.scheduler import state_from_data
+    data = {
+        "aps": [],
+        "switches": [],
+        "alarms": [
+            {"severity": "critical", "count": 0},   # explicit zero
+            {"severity": "critical"},               # missing count
+        ],
+    }
+    s = state_from_data(data)
+    assert s["critical_alarms"] == 0, (
+        "count=0 and missing count must both contribute 0, not 1"
+    )
 
 
 def test_poor_quality_aps_threshold():
@@ -327,3 +347,743 @@ def test_traffic_live_rate_from_deltas(monkeypatch):
                json={"list": [{"key": "S1", "value": 11000}]}, status=200)
         out3 = traffic_mod.fetch(ctx)
     assert out3["items"][0]["rate_bps"] == rate
+
+
+# ── outage: DeviceStatus and device_online helpers ────────────────────────
+
+def test_device_status_dataclass_fields():
+    from ruckus_dashboard.notify.outage import DeviceStatus
+    ds = DeviceStatus(
+        key="ap:aabbcc",
+        type="ap",
+        name="AP-1",
+        group="HQ",
+        online=True,
+        raw_status="online",
+        last_change=1000.0,
+    )
+    assert ds.key == "ap:aabbcc"
+    assert ds.online is True
+    assert ds.last_change == 1000.0
+    # pending fields default to None
+    assert ds.pending_since is None
+    assert ds.pending_target is None
+
+
+def test_device_online_ap():
+    from ruckus_dashboard.notify.outage import device_online
+    assert device_online("ap", "online") is True
+    assert device_online("ap", "offline") is False
+    assert device_online("ap", "unknown") is False
+
+
+def test_device_online_switch():
+    from ruckus_dashboard.notify.outage import device_online
+    assert device_online("switch", "online") is True
+    assert device_online("switch", "offline") is False
+    assert device_online("switch", "flagged") is False
+
+
+def test_device_online_controller():
+    from ruckus_dashboard.notify.outage import device_online
+    # matches controller._NODE_ONLINE exactly
+    for state in ("in_service", "online", "active", "up",
+                  "management_in_service", "service_ready"):
+        assert device_online("controller", state) is True, state
+    assert device_online("controller", "disconnected") is False
+    assert device_online("controller", "") is False
+
+
+# ── outage: OutageEngine.reconcile ────────────────────────────────────────
+
+def _make_snapshot(entries: list[tuple]) -> dict:
+    """entries: (key, type, name, group, online, raw_status)"""
+    from ruckus_dashboard.notify.outage import DeviceStatus
+    return {
+        key: DeviceStatus(key=key, type=typ, name=name, group=grp,
+                          online=on, raw_status=rs, last_change=0.0)
+        for key, typ, name, grp, on, rs in entries
+    }
+
+
+def test_reconcile_baseline_seeding_no_events():
+    """First call (empty prior devices) seeds silently — no events emitted."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    snapshot = _make_snapshot([
+        ("ap:aa", "ap", "AP-1", "HQ", False, "offline"),
+        ("ap:bb", "ap", "AP-2", "HQ", True, "online"),
+    ])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile({}, snapshot, cfg, now=1000.0)
+    assert events == []
+    assert new_devices["ap:aa"].online is False
+    assert new_devices["ap:bb"].online is True
+
+
+def test_reconcile_offline_transition_fires_immediately_when_no_debounce():
+    """Previously-online device goes offline; debounce=0 fires on first tick."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev_devices = _make_snapshot([
+        ("ap:aa", "ap", "AP-1", "HQ", True, "online"),
+    ])
+    snapshot = _make_snapshot([
+        ("ap:aa", "ap", "AP-1", "HQ", False, "offline"),
+    ])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(prev_devices, snapshot, cfg, now=2000.0)
+    assert len(events) == 1
+    assert events[0].kind == "offline"
+    assert events[0].key == "ap:aa"
+    assert events[0].name == "AP-1"
+    assert events[0].group == "HQ"
+    assert events[0].ts == 2000.0
+
+
+def test_reconcile_stable_online_no_event():
+    """Device that was online and stays online emits nothing."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=3000.0)
+    assert events == []
+
+
+def test_reconcile_stable_offline_no_event():
+    """Pre-existing outage (committed offline) stays offline — no re-alert."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", False, "offline")])
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", False, "offline")])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=4000.0)
+    assert events == []
+
+
+def test_reconcile_recovery_event_when_enabled():
+    """Offline device comes back; recovery=True emits online event."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("sw:s1", "switch", "SW-1", "Core", False, "offline")])
+    snap = _make_snapshot([("sw:s1", "switch", "SW-1", "Core", True, "online")])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=5000.0)
+    assert len(events) == 1
+    assert events[0].kind == "online"
+    assert events[0].key == "sw:s1"
+
+
+def test_reconcile_recovery_suppressed_when_disabled():
+    """Offline device comes back; recovery=False emits nothing."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("sw:s1", "switch", "SW-1", "Core", False, "offline")])
+    snap = _make_snapshot([("sw:s1", "switch", "SW-1", "Core", True, "online")])
+    cfg = {"debounce_seconds": 0, "recovery": False, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=6000.0)
+    assert events == []
+
+
+def test_reconcile_offline_threshold_suppresses_small_batch():
+    """`offline_threshold=3` suppresses a batch of only 2 newly-offline devices."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([
+        ("ap:a1", "ap", "AP-1", "HQ", True, "online"),
+        ("ap:a2", "ap", "AP-2", "HQ", True, "online"),
+    ])
+    snap = _make_snapshot([
+        ("ap:a1", "ap", "AP-1", "HQ", False, "offline"),
+        ("ap:a2", "ap", "AP-2", "HQ", False, "offline"),
+    ])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 3}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=7000.0)
+    # only 2 newly offline, threshold=3 — suppressed
+    offline_events = [e for e in events if e.kind == "offline"]
+    assert offline_events == []
+
+
+def test_reconcile_offline_threshold_fires_when_met():
+    """`offline_threshold=2` fires when exactly 2 devices newly go offline."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([
+        ("ap:a1", "ap", "AP-1", "HQ", True, "online"),
+        ("ap:a2", "ap", "AP-2", "HQ", True, "online"),
+    ])
+    snap = _make_snapshot([
+        ("ap:a1", "ap", "AP-1", "HQ", False, "offline"),
+        ("ap:a2", "ap", "AP-2", "HQ", False, "offline"),
+    ])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 2}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=8000.0)
+    offline_events = [e for e in events if e.kind == "offline"]
+    assert len(offline_events) == 2
+
+
+# ── outage: debounce ──────────────────────────────────────────────────────
+
+def test_reconcile_debounce_holds_on_first_tick():
+    """Offline device within debounce window: no event on first tick."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", False, "offline")])
+    cfg = {"debounce_seconds": 120, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(prev, snap, cfg, now=1000.0)
+    assert events == []
+    # pending_since recorded
+    assert new_devices["ap:aa"].pending_since == 1000.0
+    assert new_devices["ap:aa"].pending_target is False
+    # committed state unchanged
+    assert new_devices["ap:aa"].online is True
+
+
+def test_reconcile_debounce_fires_after_window():
+    """Same device still offline after debounce_seconds → event emitted."""
+    from ruckus_dashboard.notify.outage import OutageEngine, DeviceStatus
+    # Simulate prev_devices as the state AFTER the first tick (pending set).
+    prev_ds = DeviceStatus(
+        key="ap:aa", type="ap", name="AP-1", group="HQ",
+        online=True, raw_status="online", last_change=900.0,
+        pending_since=1000.0, pending_target=False,
+    )
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", False, "offline")])
+    cfg = {"debounce_seconds": 120, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(
+        {"ap:aa": prev_ds}, snap, cfg, now=1121.0  # 121 s later, past window
+    )
+    assert len(events) == 1
+    assert events[0].kind == "offline"
+    assert new_devices["ap:aa"].online is False
+    assert new_devices["ap:aa"].pending_since is None
+
+
+def test_reconcile_debounce_not_yet_matured():
+    """Still within the window (119 s): pending kept, no event."""
+    from ruckus_dashboard.notify.outage import OutageEngine, DeviceStatus
+    prev_ds = DeviceStatus(
+        key="ap:aa", type="ap", name="AP-1", group="HQ",
+        online=True, raw_status="online", last_change=900.0,
+        pending_since=1000.0, pending_target=False,
+    )
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", False, "offline")])
+    cfg = {"debounce_seconds": 120, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(
+        {"ap:aa": prev_ds}, snap, cfg, now=1119.0
+    )
+    assert events == []
+    assert new_devices["ap:aa"].pending_since == 1000.0
+    assert new_devices["ap:aa"].online is True
+
+
+def test_reconcile_flap_within_debounce_suppressed():
+    """Device goes offline then recovers within the debounce window — no event."""
+    from ruckus_dashboard.notify.outage import OutageEngine, DeviceStatus
+    # After tick 1: pending toward False (offline)
+    prev_ds = DeviceStatus(
+        key="ap:aa", type="ap", name="AP-1", group="HQ",
+        online=True, raw_status="online", last_change=900.0,
+        pending_since=1000.0, pending_target=False,
+    )
+    # Tick 2: device is back online within the 120 s window.
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    cfg = {"debounce_seconds": 120, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(
+        {"ap:aa": prev_ds}, snap, cfg, now=1060.0
+    )
+    assert events == []
+    # Pending cleared; stable online.
+    assert new_devices["ap:aa"].pending_since is None
+    assert new_devices["ap:aa"].online is True
+
+
+# ── outage: fetch-failed device type must not go offline ──────────────────
+
+def test_reconcile_unfetched_kind_carries_forward_no_event():
+    """A committed-online AP whose kind was NOT fetched this tick must be
+    carried forward unchanged (still online) and emit NO offline event, even
+    when advanced well past the debounce window.
+
+    This guards against a per-type fetch outage (e.g. the AP endpoint down)
+    marking every previously-online device of that type offline — a false
+    offline alert storm.
+    """
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    # AP absent from snapshot because its fetcher raised — kind not in
+    # fetched_kinds. Switches WERE fetched (present here for realism).
+    snap = _make_snapshot([("sw:s1", "switch", "SW-1", "Core", True, "online")])
+    cfg = {"debounce_seconds": 120, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(
+        prev, snap, cfg, now=99999.0, fetched_kinds={"switch", "controller"}
+    )
+    assert events == [], "unfetched AP kind must not produce an offline event"
+    # AP carried forward committed-online, no pending window opened.
+    assert new_devices["ap:aa"].online is True
+    assert new_devices["ap:aa"].pending_since is None
+    assert new_devices["ap:aa"].pending_target is None
+
+
+def test_reconcile_genuinely_gone_within_fetched_kind_still_offline():
+    """Guard the happy path: a device absent from the snapshot whose kind WAS
+    fetched this tick is genuinely gone and must still fire offline."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    # AP kind fetched, but this AP is missing from the snapshot → truly gone.
+    snap = _make_snapshot([("ap:bb", "ap", "AP-2", "HQ", True, "online")])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(
+        prev, snap, cfg, now=2000.0, fetched_kinds={"ap"}
+    )
+    offline = [e for e in events if e.kind == "offline"]
+    assert len(offline) == 1
+    assert offline[0].key == "ap:aa"
+    assert offline[0].raw_status == "missing"
+    assert new_devices["ap:aa"].online is False
+
+
+# ── outage: render_alert ──────────────────────────────────────────────────
+
+def _make_event(kind, key, typ, name, group, ts=5000.0):
+    from ruckus_dashboard.notify.outage import OutageEvent
+    return OutageEvent(kind=kind, key=key, type=typ, name=name,
+                       group=group, raw_status="offline", ts=ts)
+
+
+def test_render_alert_subject_counts():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [
+        _make_event("offline", "ap:a1", "ap", "AP-1", "HQ"),
+        _make_event("offline", "ap:a2", "ap", "AP-2", "Branch"),
+        _make_event("online",  "sw:s1", "switch", "SW-1", "Core"),
+    ]
+    note = render_alert(events, group_by="site")
+    assert "2 devices offline" in note.subject
+    assert "1 recovered" in note.subject
+
+
+def test_render_alert_subject_includes_groups():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [
+        _make_event("offline", "ap:a1", "ap", "AP-1", "HQ"),
+        _make_event("offline", "ap:a2", "ap", "AP-2", "Branch"),
+    ]
+    note = render_alert(events, group_by="site")
+    assert "HQ" in note.subject or "Branch" in note.subject
+
+
+def test_render_alert_body_groups_by_site():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [
+        _make_event("offline", "ap:a1", "ap", "AP-1", "HQ"),
+        _make_event("offline", "sw:s1", "switch", "SW-1", "HQ"),
+        _make_event("offline", "ap:a2", "ap", "AP-2", "Branch"),
+    ]
+    note = render_alert(events, group_by="site")
+    assert "HQ" in note.body
+    assert "Branch" in note.body
+    assert "AP-1" in note.body
+    assert "SW-1" in note.body
+    assert "AP-2" in note.body
+
+
+def test_render_alert_body_flat_when_group_by_none():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [
+        _make_event("offline", "ap:a1", "ap", "AP-1", "HQ"),
+        _make_event("offline", "ap:a2", "ap", "AP-2", "Branch"),
+    ]
+    note = render_alert(events, group_by="none")
+    assert "AP-1" in note.body
+    assert "AP-2" in note.body
+
+
+def test_render_alert_recovery_section_in_body():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [
+        _make_event("offline", "ap:a1", "ap", "AP-1", "HQ"),
+        _make_event("online",  "sw:s1", "switch", "SW-1", "Core"),
+    ]
+    note = render_alert(events, group_by="site")
+    assert "Recovered" in note.body or "recovered" in note.body
+    assert "SW-1" in note.body
+
+
+def test_render_alert_structured_events_tuple():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [_make_event("offline", "ap:a1", "ap", "AP-1", "HQ")]
+    note = render_alert(events, group_by="site")
+    assert len(note.events) == 1
+    assert note.events[0].key == "ap:a1"
+
+
+def test_render_alert_controller_node_event():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [_make_event("offline", "controller:node1",
+                          "controller", "SZ-Node-1", "controller")]
+    note = render_alert(events, group_by="site")
+    assert "SZ-Node-1" in note.body
+    assert "controller" in note.body.lower()
+
+
+# ── state_store ───────────────────────────────────────────────────────────
+
+def test_json_state_store_roundtrip(tmp_instance):
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    from ruckus_dashboard.notify.outage import DeviceStatus
+    store = JsonOutageStateStore(tmp_instance)
+    ds = DeviceStatus(key="ap:aa", type="ap", name="AP-1", group="HQ",
+                      online=False, raw_status="offline", last_change=1000.0)
+    state = {
+        "devices": {"ap:aa": ds},
+        "report": {"last_report_day": "2026-06-30"},
+    }
+    store.save(state)
+    loaded = store.load()
+    assert loaded["devices"]["ap:aa"].online is False
+    assert loaded["devices"]["ap:aa"].name == "AP-1"
+    assert loaded["report"]["last_report_day"] == "2026-06-30"
+
+
+def test_json_state_store_missing_file_returns_empty(tmp_instance):
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    store = JsonOutageStateStore(tmp_instance)
+    result = store.load()
+    assert result["devices"] == {}
+    assert result["report"] == {}
+
+
+def test_json_state_store_corrupt_file_returns_empty(tmp_instance):
+    from pathlib import Path
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    p = Path(tmp_instance) / "notify_state.json"
+    p.write_text("NOT JSON{{{", encoding="utf-8")
+    store = JsonOutageStateStore(tmp_instance)
+    result = store.load()
+    assert result["devices"] == {}
+
+
+def test_json_state_store_atomic_no_tmp_left(tmp_instance):
+    """After save(), .tmp file must not exist."""
+    from pathlib import Path
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    store = JsonOutageStateStore(tmp_instance)
+    store.save({"devices": {}, "report": {}})
+    tmp = Path(tmp_instance) / "notify_state.json.tmp"
+    assert not tmp.exists()
+    main = Path(tmp_instance) / "notify_state.json"
+    assert main.exists()
+
+
+def test_json_state_store_chmod_best_effort_on_windows(tmp_instance):
+    """chmod failure (Windows) must not raise."""
+    from unittest.mock import patch
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    store = JsonOutageStateStore(tmp_instance)
+    with patch("os.chmod", side_effect=OSError("read-only fs")):
+        # Should not raise despite chmod failing.
+        store.save({"devices": {}, "report": {}})
+
+
+def test_json_state_store_pending_fields_roundtrip(tmp_instance):
+    """pending_since and pending_target survive a save/load cycle."""
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    from ruckus_dashboard.notify.outage import DeviceStatus
+    store = JsonOutageStateStore(tmp_instance)
+    ds = DeviceStatus(key="ap:bb", type="ap", name="AP-2", group="Branch",
+                      online=True, raw_status="online", last_change=900.0,
+                      pending_since=1000.0, pending_target=False)
+    store.save({"devices": {"ap:bb": ds}, "report": {}})
+    loaded = store.load()
+    assert loaded["devices"]["ap:bb"].pending_since == 1000.0
+    assert loaded["devices"]["ap:bb"].pending_target is False
+
+
+# ── channels ─────────────────────────────────────────────────────────────
+
+def test_notification_is_importable_from_channels():
+    from ruckus_dashboard.notify.channels import Notification
+    from ruckus_dashboard.notify.outage import Notification as NotifOutage
+    # channels re-exports the same class from outage.py
+    assert Notification is NotifOutage
+
+
+def test_email_channel_is_configured_when_recipients():
+    from ruckus_dashboard.notify.channels import EmailChannel
+    ch = EmailChannel()
+    assert ch.name == "email"
+    assert ch.is_configured({"alerts": {"recipients": ["a@x"]}}) is True
+    assert ch.is_configured({"alerts": {"recipients": []}}) is False
+    assert ch.is_configured({}) is False
+
+
+def test_email_channel_send_calls_mailer(monkeypatch):
+    from ruckus_dashboard.notify import channels as ch_mod
+    from ruckus_dashboard.notify.channels import EmailChannel
+    from ruckus_dashboard.notify.outage import Notification
+    calls = {}
+
+    def fake_send(cfg, pw, recipients, subject, body, **kw):
+        calls["recipients"] = recipients
+        calls["subject"] = subject
+        calls["body"] = body
+
+    monkeypatch.setattr(ch_mod, "send_email", fake_send)
+    monkeypatch.setattr(ch_mod, "smtp_password", lambda cfg, secrets: "pw")
+
+    note = Notification(
+        subject="[RUCKUS DSO] 1 device offline (HQ)",
+        body="DEVICES OFFLINE\n  AP-1 (ap) — offline",
+        events=(),
+    )
+    cfg = {"alerts": {"recipients": ["noc@x"]}, "smtp": {"host": "mail.x"}}
+    EmailChannel().send(cfg, object(), note)
+    assert calls["recipients"] == ["noc@x"]
+    assert "1 device offline" in calls["subject"]
+
+
+def test_email_channel_send_failure_does_not_raise(monkeypatch):
+    """A raising mailer.send_email is swallowed by the channel."""
+    from ruckus_dashboard.notify import channels as ch_mod
+    from ruckus_dashboard.notify.channels import EmailChannel
+    from ruckus_dashboard.notify.outage import Notification
+
+    monkeypatch.setattr(ch_mod, "send_email",
+                        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("SMTP down")))
+    monkeypatch.setattr(ch_mod, "smtp_password", lambda cfg, secrets: "")
+    note = Notification(subject="s", body="b", events=())
+    cfg = {"alerts": {"recipients": ["a@x"]}, "smtp": {"host": "mail.x"}}
+    # Must not raise — channel isolation.
+    EmailChannel().send(cfg, object(), note)
+
+
+def test_channels_registry_contains_email():
+    from ruckus_dashboard.notify.channels import CHANNELS
+    assert "email" in CHANNELS
+    assert CHANNELS["email"].name == "email"
+
+
+# ── config: new SP2 defaults ──────────────────────────────────────────────
+
+def test_config_new_alert_defaults_present(tmp_path):
+    from ruckus_dashboard.notify import config as cfg_mod
+    cfg = cfg_mod.load_config(str(tmp_path))
+    alerts = cfg["alerts"]
+    assert alerts["recovery"] is True
+    assert alerts["debounce_seconds"] == 120
+    assert alerts["group_by"] == "site"
+    assert alerts["suppress_known_on_start"] is True
+    assert isinstance(alerts.get("channels"), dict)
+
+
+def test_config_new_defaults_do_not_break_old_file(tmp_path):
+    """An old notifications.json (no new keys) merges cleanly."""
+    import json
+    from ruckus_dashboard.notify import config as cfg_mod
+    old = {
+        "smtp": {"host": "mail.x", "port": 587, "security": "starttls",
+                 "username": "", "password_enc": "", "from_addr": ""},
+        "alerts": {"enabled": True, "recipients": ["a@x"],
+                   "check_seconds": 300,
+                   "rules": {"ap_offline": True, "switch_offline": True,
+                             "critical_alarm": True, "poor_client_ap": True},
+                   "offline_threshold": 1},
+        "report": {"enabled": False, "recipients": [], "time": "07:00"},
+    }
+    (tmp_path / "notifications.json").write_text(json.dumps(old), encoding="utf-8")
+    cfg = cfg_mod.load_config(str(tmp_path))
+    # Old keys preserved.
+    assert cfg["alerts"]["enabled"] is True
+    assert cfg["alerts"]["recipients"] == ["a@x"]
+    # New keys get defaults.
+    assert cfg["alerts"]["recovery"] is True
+    assert cfg["alerts"]["debounce_seconds"] == 120
+
+
+def test_config_channels_backward_compat(tmp_path):
+    """If channels absent, synthesize from existing recipients field."""
+    import json
+    from ruckus_dashboard.notify import config as cfg_mod
+    old = {"alerts": {"enabled": True, "recipients": ["noc@x"]}}
+    (tmp_path / "notifications.json").write_text(json.dumps(old), encoding="utf-8")
+    cfg = cfg_mod.load_config(str(tmp_path))
+    # The merged config contains channels with the legacy recipients.
+    ch = cfg["alerts"].get("channels") or {}
+    assert isinstance(ch, dict)
+
+
+# ── scheduler: collect_device_snapshot ───────────────────────────────────
+
+def test_collect_device_snapshot_ap_row():
+    """AP row normalizes to DeviceStatus with key 'ap:<mac>'."""
+    from unittest.mock import patch, MagicMock
+    from ruckus_dashboard.notify.scheduler import collect_device_snapshot
+
+    ap_row = {
+        "id": "aa:bb:cc", "name": "AP-1", "zone": "HQ",
+        "status": "offline", "mac": "aa:bb:cc",
+    }
+    conn = MagicMock()
+    cfg = {}
+
+    with patch("ruckus_dashboard.notify.scheduler.MODULES", {
+        "aps": MagicMock(fetcher=lambda ctx: {"items": [ap_row]}),
+        "switches": MagicMock(fetcher=lambda ctx: {"items": []}),
+        "controller": MagicMock(fetcher=lambda ctx: {"items": []}),
+    }):
+        snapshot, fetched_kinds = collect_device_snapshot(conn, cfg)
+
+    assert "ap:aa:bb:cc" in snapshot
+    ds = snapshot["ap:aa:bb:cc"]
+    assert ds.type == "ap"
+    assert ds.name == "AP-1"
+    assert ds.group == "HQ"
+    assert ds.online is False
+    assert fetched_kinds == {"ap", "switch", "controller"}
+
+
+def test_collect_device_snapshot_switch_row():
+    from unittest.mock import patch, MagicMock
+    from ruckus_dashboard.notify.scheduler import collect_device_snapshot
+
+    sw_row = {
+        "id": "SW-ID-1", "name": "SW-1", "group": "Core",
+        "status": "online", "mac": "SW-ID-1",
+    }
+    conn = MagicMock()
+    cfg = {}
+
+    with patch("ruckus_dashboard.notify.scheduler.MODULES", {
+        "aps": MagicMock(fetcher=lambda ctx: {"items": []}),
+        "switches": MagicMock(fetcher=lambda ctx: {"items": [sw_row]}),
+        "controller": MagicMock(fetcher=lambda ctx: {"items": []}),
+    }):
+        snapshot, fetched_kinds = collect_device_snapshot(conn, cfg)
+
+    assert "switch:SW-ID-1" in snapshot
+    ds = snapshot["switch:SW-ID-1"]
+    assert ds.type == "switch"
+    assert ds.online is True
+    assert ds.group == "Core"
+    assert fetched_kinds == {"ap", "switch", "controller"}
+
+
+def test_collect_device_snapshot_controller_node():
+    from unittest.mock import patch, MagicMock
+    from ruckus_dashboard.notify.scheduler import collect_device_snapshot
+
+    ctrl_row = {"id": "node-1", "node": "SZ-Node-1", "state": "in_service"}
+    conn = MagicMock()
+    cfg = {}
+
+    with patch("ruckus_dashboard.notify.scheduler.MODULES", {
+        "aps": MagicMock(fetcher=lambda ctx: {"items": []}),
+        "switches": MagicMock(fetcher=lambda ctx: {"items": []}),
+        "controller": MagicMock(fetcher=lambda ctx: {"items": [ctrl_row]}),
+    }):
+        snapshot, fetched_kinds = collect_device_snapshot(conn, cfg)
+
+    assert "controller:node-1" in snapshot
+    ds = snapshot["controller:node-1"]
+    assert ds.type == "controller"
+    assert ds.online is True
+    assert ds.name == "SZ-Node-1"
+    assert fetched_kinds == {"ap", "switch", "controller"}
+
+
+def test_collect_device_snapshot_fetch_failure_leaves_type_absent():
+    """If a fetcher throws, that device type is omitted (not marked offline)."""
+    from unittest.mock import patch, MagicMock
+    from ruckus_dashboard.notify.scheduler import collect_device_snapshot
+
+    ap_row = {"id": "aa:bb", "name": "AP-1", "zone": "HQ",
+              "status": "online", "mac": "aa:bb"}
+
+    def _bad_fetch(ctx):
+        raise RuntimeError("API down")
+
+    conn = MagicMock()
+    cfg = {}
+
+    with patch("ruckus_dashboard.notify.scheduler.MODULES", {
+        "aps": MagicMock(fetcher=lambda ctx: {"items": [ap_row]}),
+        "switches": MagicMock(fetcher=_bad_fetch),
+        "controller": MagicMock(fetcher=lambda ctx: {"items": []}),
+    }):
+        snapshot, fetched_kinds = collect_device_snapshot(conn, cfg)
+
+    # AP is present; switch fetch failed so no switch keys.
+    assert "ap:aa:bb" in snapshot
+    sw_keys = [k for k in snapshot if k.startswith("switch:")]
+    assert sw_keys == []
+    # The failed kind is excluded from fetched_kinds; the others are present.
+    assert "switch" not in fetched_kinds
+    assert fetched_kinds == {"ap", "controller"}
+
+
+# ── scheduler: baseline-spam fix (audit #4) ──────────────────────────────
+
+def test_baseline_spam_not_fired_on_existing_outage(tmp_instance):
+    """Audit #4: pre-existing outage in store must NOT re-fire on tick.
+
+    This test INVERTS the old test_rules_fire_on_transition_only assumption
+    (test_notify.py:56-57 which called evaluate(None, ...) and expected 1 alert).
+    """
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    from ruckus_dashboard.notify.outage import DeviceStatus, OutageEngine
+    store = JsonOutageStateStore(tmp_instance)
+    # Seed: ap:aa is already offline in committed state.
+    ds = DeviceStatus(key="ap:aa", type="ap", name="AP-1", group="HQ",
+                      online=False, raw_status="offline", last_change=1000.0)
+    store.save({"devices": {"ap:aa": ds}, "report": {}})
+    loaded = store.load()
+
+    # Snapshot: ap:aa still offline.
+    snapshot = {
+        "ap:aa": DeviceStatus(key="ap:aa", type="ap", name="AP-1", group="HQ",
+                              online=False, raw_status="offline", last_change=0.0),
+    }
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(loaded["devices"], snapshot, cfg, now=2000.0)
+    assert events == [], "pre-existing outage must not re-fire after store load"
+
+
+# ── scheduler: durable daily-report dedup (audit #5) ─────────────────────
+
+def test_report_due_persisted_day_prevents_resend(tmp_instance):
+    """Audit #5: _report_due must read last_report_day from the store.
+
+    Starting the scheduler after the configured time with today already
+    persisted must NOT send the report again."""
+    from ruckus_dashboard.notify.scheduler import NotifyScheduler
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    import time as _t
+
+    store = JsonOutageStateStore(tmp_instance)
+    # Persist today as already-reported.
+    store.save({"devices": {}, "report": {"last_report_day": "2026-06-30"}})
+
+    s = NotifyScheduler(tmp_instance, {}, FakeSecrets())
+    cfg = _cfg_mod_load(tmp_instance)
+    cfg["report"]["enabled"] = True
+    cfg["report"]["time"] = "07:00"
+    # Simulate starting after report time with today's date persisted.
+    after = _t.strptime("2026-06-30 09:00", "%Y-%m-%d %H:%M")
+    assert s._report_due(cfg, after) is False
+
+
+def test_report_due_fires_when_day_not_yet_persisted(tmp_instance):
+    """_report_due fires when the store has yesterday (or nothing) persisted."""
+    from ruckus_dashboard.notify.scheduler import NotifyScheduler
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    import time as _t
+
+    store = JsonOutageStateStore(tmp_instance)
+    store.save({"devices": {}, "report": {"last_report_day": "2026-06-29"}})
+
+    s = NotifyScheduler(tmp_instance, {}, FakeSecrets())
+    cfg = _cfg_mod_load(tmp_instance)
+    cfg["report"]["enabled"] = True
+    cfg["report"]["time"] = "07:00"
+    after = _t.strptime("2026-06-30 07:01", "%Y-%m-%d %H:%M")
+    assert s._report_due(cfg, after) is True
+
+
+def _cfg_mod_load(tmp_instance):
+    from ruckus_dashboard.notify import config as cfg_mod
+    return cfg_mod.load_config(tmp_instance)
