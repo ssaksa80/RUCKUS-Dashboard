@@ -196,3 +196,12 @@ def test_dashboard_js_tile_counts_up_and_pulses():
         fn = body.split("const updateTile", 1)[1].split("const finish", 1)[0]
         assert "animateCount" in fn, "updateTile must count up the resolved value"
         assert "pulse(tile" in fn or "m.pulse(tile" in fn, "tile must pulse on resolve"
+
+
+def test_base_html_loads_motion_before_dashboard():
+    html = pathlib.Path(
+        "RUCKUS/ruckus_dashboard/templates/base.html").read_text(encoding="utf-8")
+    assert "filename='motion.js'" in html, "base.html must load motion.js"
+    # ordering: motion.js must appear before dashboard.js so RuckusMotion is defined
+    assert html.index("motion.js") < html.index("dashboard.js"), \
+        "motion.js must be loaded before dashboard.js"
