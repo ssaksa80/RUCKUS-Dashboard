@@ -727,3 +727,67 @@ def test_json_state_store_pending_fields_roundtrip(tmp_instance):
     loaded = store.load()
     assert loaded["devices"]["ap:bb"].pending_since == 1000.0
     assert loaded["devices"]["ap:bb"].pending_target is False
+
+
+# ── channels ─────────────────────────────────────────────────────────────
+
+def test_notification_is_importable_from_channels():
+    from ruckus_dashboard.notify.channels import Notification
+    from ruckus_dashboard.notify.outage import Notification as NotifOutage
+    # channels re-exports the same class from outage.py
+    assert Notification is NotifOutage
+
+
+def test_email_channel_is_configured_when_recipients():
+    from ruckus_dashboard.notify.channels import EmailChannel
+    ch = EmailChannel()
+    assert ch.name == "email"
+    assert ch.is_configured({"alerts": {"recipients": ["a@x"]}}) is True
+    assert ch.is_configured({"alerts": {"recipients": []}}) is False
+    assert ch.is_configured({}) is False
+
+
+def test_email_channel_send_calls_mailer(monkeypatch):
+    from ruckus_dashboard.notify import channels as ch_mod
+    from ruckus_dashboard.notify.channels import EmailChannel
+    from ruckus_dashboard.notify.outage import Notification
+    calls = {}
+
+    def fake_send(cfg, pw, recipients, subject, body, **kw):
+        calls["recipients"] = recipients
+        calls["subject"] = subject
+        calls["body"] = body
+
+    monkeypatch.setattr(ch_mod, "send_email", fake_send)
+    monkeypatch.setattr(ch_mod, "smtp_password", lambda cfg, secrets: "pw")
+
+    note = Notification(
+        subject="[RUCKUS DSO] 1 device offline (HQ)",
+        body="DEVICES OFFLINE\n  AP-1 (ap) — offline",
+        events=(),
+    )
+    cfg = {"alerts": {"recipients": ["noc@x"]}, "smtp": {"host": "mail.x"}}
+    EmailChannel().send(cfg, object(), note)
+    assert calls["recipients"] == ["noc@x"]
+    assert "1 device offline" in calls["subject"]
+
+
+def test_email_channel_send_failure_does_not_raise(monkeypatch):
+    """A raising mailer.send_email is swallowed by the channel."""
+    from ruckus_dashboard.notify import channels as ch_mod
+    from ruckus_dashboard.notify.channels import EmailChannel
+    from ruckus_dashboard.notify.outage import Notification
+
+    monkeypatch.setattr(ch_mod, "send_email",
+                        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("SMTP down")))
+    monkeypatch.setattr(ch_mod, "smtp_password", lambda cfg, secrets: "")
+    note = Notification(subject="s", body="b", events=())
+    cfg = {"alerts": {"recipients": ["a@x"]}, "smtp": {"host": "mail.x"}}
+    # Must not raise — channel isolation.
+    EmailChannel().send(cfg, object(), note)
+
+
+def test_channels_registry_contains_email():
+    from ruckus_dashboard.notify.channels import CHANNELS
+    assert "email" in CHANNELS
+    assert CHANNELS["email"].name == "email"
