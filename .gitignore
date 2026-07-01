@@ -2,6 +2,10 @@
 RUCKUS/instance/
 instance/
 
+# Build / tool artifacts (knowledge graph output, SP scratch)
+graphify-out/
+.superpowers/
+
 # Python
 __pycache__/
 *.py[cod]
