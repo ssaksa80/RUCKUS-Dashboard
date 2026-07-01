@@ -118,6 +118,7 @@ def test_alerts_due_respects_interval(tmp_path):
 
 
 def test_report_due_once_per_day_after_time(tmp_path):
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
     s = _sched(tmp_path)
     cfg = cfg_mod.load_config(str(tmp_path))
     cfg["report"]["enabled"] = True
@@ -126,7 +127,9 @@ def test_report_due_once_per_day_after_time(tmp_path):
     after = time.strptime("2026-06-10 07:01", "%Y-%m-%d %H:%M")
     assert s._report_due(cfg, before) is False
     assert s._report_due(cfg, after) is True
-    s._last_report_day = "2026-06-10"
+    # Persist today via the store (not the in-memory field).
+    store = JsonOutageStateStore(str(tmp_path))
+    store.save({"devices": {}, "report": {"last_report_day": "2026-06-10"}})
     assert s._report_due(cfg, after) is False      # once per day
     next_day = time.strptime("2026-06-11 07:01", "%Y-%m-%d %H:%M")
     assert s._report_due(cfg, next_day) is True
@@ -857,3 +860,179 @@ def test_config_channels_backward_compat(tmp_path):
     # The merged config contains channels with the legacy recipients.
     ch = cfg["alerts"].get("channels") or {}
     assert isinstance(ch, dict)
+
+
+# ── scheduler: collect_device_snapshot ───────────────────────────────────
+
+def test_collect_device_snapshot_ap_row():
+    """AP row normalizes to DeviceStatus with key 'ap:<mac>'."""
+    from unittest.mock import patch, MagicMock
+    from ruckus_dashboard.notify.scheduler import collect_device_snapshot
+
+    ap_row = {
+        "id": "aa:bb:cc", "name": "AP-1", "zone": "HQ",
+        "status": "offline", "mac": "aa:bb:cc",
+    }
+    conn = MagicMock()
+    cfg = {}
+
+    with patch("ruckus_dashboard.notify.scheduler.MODULES", {
+        "aps": MagicMock(fetcher=lambda ctx: {"items": [ap_row]}),
+        "switches": MagicMock(fetcher=lambda ctx: {"items": []}),
+        "controller": MagicMock(fetcher=lambda ctx: {"items": []}),
+    }):
+        snapshot = collect_device_snapshot(conn, cfg)
+
+    assert "ap:aa:bb:cc" in snapshot
+    ds = snapshot["ap:aa:bb:cc"]
+    assert ds.type == "ap"
+    assert ds.name == "AP-1"
+    assert ds.group == "HQ"
+    assert ds.online is False
+
+
+def test_collect_device_snapshot_switch_row():
+    from unittest.mock import patch, MagicMock
+    from ruckus_dashboard.notify.scheduler import collect_device_snapshot
+
+    sw_row = {
+        "id": "SW-ID-1", "name": "SW-1", "group": "Core",
+        "status": "online", "mac": "SW-ID-1",
+    }
+    conn = MagicMock()
+    cfg = {}
+
+    with patch("ruckus_dashboard.notify.scheduler.MODULES", {
+        "aps": MagicMock(fetcher=lambda ctx: {"items": []}),
+        "switches": MagicMock(fetcher=lambda ctx: {"items": [sw_row]}),
+        "controller": MagicMock(fetcher=lambda ctx: {"items": []}),
+    }):
+        snapshot = collect_device_snapshot(conn, cfg)
+
+    assert "switch:SW-ID-1" in snapshot
+    ds = snapshot["switch:SW-ID-1"]
+    assert ds.type == "switch"
+    assert ds.online is True
+    assert ds.group == "Core"
+
+
+def test_collect_device_snapshot_controller_node():
+    from unittest.mock import patch, MagicMock
+    from ruckus_dashboard.notify.scheduler import collect_device_snapshot
+
+    ctrl_row = {"id": "node-1", "node": "SZ-Node-1", "state": "in_service"}
+    conn = MagicMock()
+    cfg = {}
+
+    with patch("ruckus_dashboard.notify.scheduler.MODULES", {
+        "aps": MagicMock(fetcher=lambda ctx: {"items": []}),
+        "switches": MagicMock(fetcher=lambda ctx: {"items": []}),
+        "controller": MagicMock(fetcher=lambda ctx: {"items": [ctrl_row]}),
+    }):
+        snapshot = collect_device_snapshot(conn, cfg)
+
+    assert "controller:node-1" in snapshot
+    ds = snapshot["controller:node-1"]
+    assert ds.type == "controller"
+    assert ds.online is True
+    assert ds.name == "SZ-Node-1"
+
+
+def test_collect_device_snapshot_fetch_failure_leaves_type_absent():
+    """If a fetcher throws, that device type is omitted (not marked offline)."""
+    from unittest.mock import patch, MagicMock
+    from ruckus_dashboard.notify.scheduler import collect_device_snapshot
+
+    ap_row = {"id": "aa:bb", "name": "AP-1", "zone": "HQ",
+              "status": "online", "mac": "aa:bb"}
+
+    def _bad_fetch(ctx):
+        raise RuntimeError("API down")
+
+    conn = MagicMock()
+    cfg = {}
+
+    with patch("ruckus_dashboard.notify.scheduler.MODULES", {
+        "aps": MagicMock(fetcher=lambda ctx: {"items": [ap_row]}),
+        "switches": MagicMock(fetcher=_bad_fetch),
+        "controller": MagicMock(fetcher=lambda ctx: {"items": []}),
+    }):
+        snapshot = collect_device_snapshot(conn, cfg)
+
+    # AP is present; switch fetch failed so no switch keys.
+    assert "ap:aa:bb" in snapshot
+    sw_keys = [k for k in snapshot if k.startswith("switch:")]
+    assert sw_keys == []
+
+
+# ── scheduler: baseline-spam fix (audit #4) ──────────────────────────────
+
+def test_baseline_spam_not_fired_on_existing_outage(tmp_instance):
+    """Audit #4: pre-existing outage in store must NOT re-fire on tick.
+
+    This test INVERTS the old test_rules_fire_on_transition_only assumption
+    (test_notify.py:56-57 which called evaluate(None, ...) and expected 1 alert).
+    """
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    from ruckus_dashboard.notify.outage import DeviceStatus, OutageEngine
+    store = JsonOutageStateStore(tmp_instance)
+    # Seed: ap:aa is already offline in committed state.
+    ds = DeviceStatus(key="ap:aa", type="ap", name="AP-1", group="HQ",
+                      online=False, raw_status="offline", last_change=1000.0)
+    store.save({"devices": {"ap:aa": ds}, "report": {}})
+    loaded = store.load()
+
+    # Snapshot: ap:aa still offline.
+    snapshot = {
+        "ap:aa": DeviceStatus(key="ap:aa", type="ap", name="AP-1", group="HQ",
+                              online=False, raw_status="offline", last_change=0.0),
+    }
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(loaded["devices"], snapshot, cfg, now=2000.0)
+    assert events == [], "pre-existing outage must not re-fire after store load"
+
+
+# ── scheduler: durable daily-report dedup (audit #5) ─────────────────────
+
+def test_report_due_persisted_day_prevents_resend(tmp_instance):
+    """Audit #5: _report_due must read last_report_day from the store.
+
+    Starting the scheduler after the configured time with today already
+    persisted must NOT send the report again."""
+    from ruckus_dashboard.notify.scheduler import NotifyScheduler
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    import time as _t
+
+    store = JsonOutageStateStore(tmp_instance)
+    # Persist today as already-reported.
+    store.save({"devices": {}, "report": {"last_report_day": "2026-06-30"}})
+
+    s = NotifyScheduler(tmp_instance, {}, FakeSecrets())
+    cfg = _cfg_mod_load(tmp_instance)
+    cfg["report"]["enabled"] = True
+    cfg["report"]["time"] = "07:00"
+    # Simulate starting after report time with today's date persisted.
+    after = _t.strptime("2026-06-30 09:00", "%Y-%m-%d %H:%M")
+    assert s._report_due(cfg, after) is False
+
+
+def test_report_due_fires_when_day_not_yet_persisted(tmp_instance):
+    """_report_due fires when the store has yesterday (or nothing) persisted."""
+    from ruckus_dashboard.notify.scheduler import NotifyScheduler
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    import time as _t
+
+    store = JsonOutageStateStore(tmp_instance)
+    store.save({"devices": {}, "report": {"last_report_day": "2026-06-29"}})
+
+    s = NotifyScheduler(tmp_instance, {}, FakeSecrets())
+    cfg = _cfg_mod_load(tmp_instance)
+    cfg["report"]["enabled"] = True
+    cfg["report"]["time"] = "07:00"
+    after = _t.strptime("2026-06-30 07:01", "%Y-%m-%d %H:%M")
+    assert s._report_due(cfg, after) is True
+
+
+def _cfg_mod_load(tmp_instance):
+    from ruckus_dashboard.notify import config as cfg_mod
+    return cfg_mod.load_config(tmp_instance)
