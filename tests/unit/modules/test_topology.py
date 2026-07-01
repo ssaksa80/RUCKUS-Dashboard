@@ -123,3 +123,19 @@ def test_expanded_ap_nodes_carry_avg_signal():
 def test_topology_advertises_graph_and_flow_views():
     from ruckus_dashboard.modules import MODULES
     assert MODULES["topology"].supports_views == ("graph", "flow")
+
+
+@responses.activate
+def test_port_flow_best_effort_and_shape():
+    base = "https://sz.example:8443/wsg/api/public"  # noqa: F841
+    sw = "https://sz.example:8443/switchm/api"
+    responses.add(responses.POST, f"{sw}/v11_0/traffic/top/portusage",
+                  json={"list": [{"key": "s1", "value": 4000000}]},
+                  status=200, match_querystring=False)
+    out = topology_mod._port_flow(_ctx())
+    assert out.get("S1") == 4000000 or out.get("s1") == 4000000
+
+
+def test_port_flow_returns_empty_on_error():
+    # No responses registered + connection refused → best-effort empty dict.
+    assert topology_mod._port_flow(_ctx()) == {}

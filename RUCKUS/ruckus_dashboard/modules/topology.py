@@ -112,6 +112,19 @@ def _traffic_map(ctx) -> dict:
     return out
 
 
+def _port_flow(ctx) -> dict:
+    """{switchId (UPPER): bytes} from SwitchM port usage. Best-effort → {}."""
+    out: dict = {}
+    data = _safe(lambda: switch_manager_query(
+        ctx.connection, "traffic/top/portusage", ctx.config)) or {}
+    for r in (data.get("list") or []):
+        if isinstance(r, dict):
+            key = r.get("key") or r.get("id")
+            if key:
+                out[str(key).upper()] = int(r.get("value") or 0)
+    return out
+
+
 def _build_graph(cluster, zones, aps, switches, traffic_by_mac,
                  alarms_by_name=None, expand=frozenset(), rssi_by_ap=None):
     cluster = cluster or {}
