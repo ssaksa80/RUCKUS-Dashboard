@@ -5,6 +5,17 @@
   --accent-dark: #13838f; --rail: #0a0f14; --rail-active: #16836f; --ok: #38c172;
   --watch: #f6c85f; --critical: #ff5f57; --neutral: #8391a2; --focus: #5bd6e5;
   --sidebar-w: 220px;
+  /* SP5 motion layer — glow halos (rgba of the existing state hues) */
+  --glow-ok: rgba(56, 193, 114, 0.55);
+  --glow-watch: rgba(246, 200, 95, 0.6);
+  --glow-critical: rgba(255, 95, 87, 0.7);
+  --glow-accent: rgba(91, 214, 229, 0.6);
+  /* timing + easing */
+  --motion-fast: 180ms;
+  --motion-base: 320ms;
+  --motion-slow: 1.6s;
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --pulse-critical-period: 1.4s; /* matches the existing topo-pulse cadence */
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
@@ -209,9 +220,10 @@ body.dso-mode .health-bar{display:none}
 }
 /* Calm field: near-zero glow = no shadow, so healthy nodes recede. */
 .topo-node.glow{transition:filter .4s ease}
-@media (prefers-reduced-motion: reduce){
-  .topo-node.pulse > circle{animation:none;stroke-opacity:1}
-}
+/* NOTE: the reduced-motion guard for `.topo-node.pulse > circle` lives in the
+   single consolidated SP5 kill-switch at the end of this file (search
+   "prefers-reduced-motion") — no separate @media block here, to avoid a
+   duplicate/conflicting rule. */
 
 /* ── SP4 status ribbon: glanceable fleet counts above the canvas ── */
 .topo-ribbon{display:flex;gap:1.25rem;align-items:center;padding:.4rem .6rem;margin-bottom:.4rem;
@@ -306,3 +318,30 @@ body.dso-mode .topo-ribbon .rib-item b{font-size:2rem}
 .dash-toast.show { opacity: 1; transform: translateY(0); }
 .dash-toast[data-ok="0"] { background: #b03a2e; }
 .module-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   SP5 — Motion & glow layer
+   GPU-friendly only (opacity/transform/filter/box-shadow). No setInterval.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Global reduced-motion kill-switch. Color states (information) remain;
+   ALL motion is flattened, including the pre-existing topo-pulse + toast-in
+   that previously ignored the OS setting (spec §3 bug fix, Q5). This is the
+   single consolidated guard — SP4's standalone topo-pulse @media was folded
+   in here so there is exactly one reduced-motion block. */
+@media (prefers-reduced-motion: reduce) {
+  .kpi-card.critical .kpi-value,
+  .status-error,
+  .health-chip.danger,
+  .topo-node.pulse > circle,
+  .topo-toast,
+  .tile,
+  .module-refreshed::after,
+  .value-changed,
+  .warmup-fill::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  /* Preserve SP4's static-pulse reset so a flagged node still reads clearly. */
+  .topo-node.pulse > circle { stroke-opacity: 1; }
+}
