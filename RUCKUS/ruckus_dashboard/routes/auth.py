@@ -29,6 +29,7 @@ from flask import (
 
 from ..auth.audit import record_audit
 from ..auth.csrf import validate_csrf
+from ..auth import oidc as oidc_mod
 from ..auth import users as users_mod
 from ..db import session_scope
 from ..db.models import Role, Tenant, User
@@ -68,7 +69,10 @@ def login():
     # Exempt from the user gate; ensure a csrf token exists for the POST.
     session.setdefault("csrf_token", secrets.token_urlsafe(32))
     return render_template(
-        "auth_login.html", csrf_token=session.get("csrf_token", "")
+        "auth_login.html",
+        csrf_token=session.get("csrf_token", ""),
+        # PB2: only advertise the SSO button when OIDC is fully configured.
+        oidc_enabled=oidc_mod.oidc_enabled(current_app),
     )
 
 
@@ -163,6 +167,88 @@ def logout_app():
     if uid is not None:
         record_audit(current_app, action="logout", user_id=uid, tenant_id=tid)
     return redirect(url_for("auth.login"))
+
+
+# ── OIDC SSO (PB2) ───────────────────────────────────────────────────────────
+#
+# These paths are gate-exempt (``/login/*`` + ``/auth/*``). The local
+# break-glass login above always remains available; OIDC is opt-in via config
+# and stays fully disabled unless issuer+client id+secret are all set.
+
+# Generic, deliberately non-specific message for every OIDC failure — never
+# leaks whether the error was validation, network, mapping, or user-declined.
+_OIDC_ERROR_FLASH = "Single sign-on failed. Please try again or use a local login."
+
+
+@bp.get("/login/oidc")
+def login_oidc():
+    """Kick off the OIDC authorization-code flow (redirect to the IdP).
+
+    Disabled → flash + bounce to the local login (no crash). Enabled → remember
+    a validated ``next`` target in the session and hand off to Authlib, which
+    stores state+nonce and 302s to the IdP authorize endpoint.
+    """
+    if not oidc_mod.oidc_enabled(current_app):
+        flash("Single sign-on is not configured.", "error")
+        return redirect(url_for("auth.login"))
+
+    # Stash where to land after login (validated on the way back out).
+    nxt = request.args.get("next")
+    if nxt:
+        session["next"] = nxt
+
+    redirect_uri = url_for("auth.oidc_callback", _external=True)
+    try:
+        return oidc_mod.begin_login(current_app, redirect_uri)
+    except Exception:  # noqa: BLE001 - discovery/build failure must not 500
+        LOG.warning("OIDC authorize redirect failed", exc_info=True)
+        record_audit(current_app, action="login_failure",
+                     detail={"method": "oidc", "stage": "authorize"})
+        flash(_OIDC_ERROR_FLASH, "error")
+        return redirect(url_for("auth.login"))
+
+
+@bp.get("/auth/callback")
+def oidc_callback():
+    """OIDC redirect target: exchange the code, provision the user, log them in.
+
+    Authlib validates state/nonce/iss/aud/signature/expiry inside
+    ``complete_login``. On success we map the IdP groups to a role, JIT-provision
+    (or update) the user, rotate the session (fixation guard, mirroring the
+    local path), audit ``login_success method=oidc`` and honour the stored
+    ``next``. On ANY error we audit a generic ``login_failure`` and redirect to
+    the local login — never surfacing token or exception detail.
+    """
+    if not oidc_mod.oidc_enabled(current_app):
+        flash("Single sign-on is not configured.", "error")
+        return redirect(url_for("auth.login"))
+
+    try:
+        claims = oidc_mod.complete_login(current_app)
+        subject, email, display_name, groups = oidc_mod.extract_claims(
+            current_app, claims
+        )
+        role = oidc_mod.map_groups_to_role(groups, current_app.config)
+        user = users_mod.upsert_oidc_user(
+            current_app, subject=subject, email=email,
+            display_name=display_name, role=role,
+        )
+        uid, tid, role_name = user.id, user.tenant_id, user.role
+    except Exception:  # noqa: BLE001 - any OIDC failure is a generic login error
+        # Do NOT log/flash the token or the raw exception message. exc_info goes
+        # only to the server log, never to the user or the audit detail.
+        LOG.warning("OIDC callback failed", exc_info=True)
+        record_audit(current_app, action="login_failure",
+                     detail={"method": "oidc", "stage": "callback"})
+        flash(_OIDC_ERROR_FLASH, "error")
+        return redirect(url_for("auth.login"))
+
+    # Read the stored next BEFORE rotating — session.clear() would wipe it.
+    dest = _safe_next(session.pop("next", None))
+    _rotate_session_for_login(uid, tid, role_name)
+    record_audit(current_app, action="login_success", user_id=uid,
+                 tenant_id=tid, detail={"method": "oidc", "email": email})
+    return redirect(dest)
 
 
 # ── admin user management ────────────────────────────────────────────────────
