@@ -831,6 +831,10 @@ function applyHealthState(slug, status, summary) {
     const n = pickSummaryNumber(summary);
     const num = Number(n);
     if (n !== undefined && typeof n !== "object" && isFinite(num)) {
+      // Fail-open: write the value first so it renders even without motion.js;
+      // animateCount reads `from` off existing textContent, so a matching
+      // pre-write is harmless (no visible jump).
+      v.textContent = String(num);
       _motion(m => m.animateCount(v, num, { fmt: String, duration: 320 }));
     } else {
       v.textContent = n === undefined ? "0" : formatKpiValue(n);
@@ -898,6 +902,9 @@ function startWarmupStream() {
       const pick = s.total ?? s.count ?? s.switches ?? Object.values(s).find(x => typeof x === "number");
       const num = Number(pick);
       if (pick !== undefined && typeof pick !== "object" && isFinite(num)) {
+        // Fail-open: write the value first so it renders even without motion.js;
+        // animateCount reads `from` off existing textContent (harmless pre-write).
+        val.textContent = String(num);
         _motion(m => m.animateCount(val, num, { fmt: String, duration: 320 }));
       } else {
         val.textContent = pick === undefined ? "0" : formatKpiValue(pick);
