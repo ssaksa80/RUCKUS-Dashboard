@@ -147,3 +147,66 @@ def test_filter_carries_server_filter_default_none():
     assert f.server_filter is None
     f2 = Filter("zone", "Zone", "select", server_filter="ZONE_ID")
     assert f2.server_filter == "ZONE_ID"
+
+
+from ruckus_dashboard.modules._base import resolve_filters, _infer_filter_kind
+
+
+def test_infer_filter_kind_by_column_kind():
+    assert _infer_filter_kind("status") == "select"
+    assert _infer_filter_kind("text") == "search"
+    assert _infer_filter_kind("link") == "search"
+    assert _infer_filter_kind("number") == "range"
+    assert _infer_filter_kind("bytes") == "range"
+    assert _infer_filter_kind("rate") == "range"
+    assert _infer_filter_kind("uptime") == "range"
+
+
+def test_resolve_filters_derives_one_per_column():
+    cols = (Column("Name", "name"), Column("Status", "status", "status"),
+            Column("Clients", "clients", "number"))
+    out = resolve_filters(cols, ())
+    by_key = {f.key: f for f in out}
+    assert by_key["name"].kind == "search"
+    assert by_key["status"].kind == "select"
+    assert by_key["clients"].kind == "range"
+    assert by_key["name"].label == "Name"
+
+
+def test_resolve_filters_suppresses_non_filterable_and_none():
+    cols = (Column("Name", "name"),
+            Column("Raw", "raw", filterable=False),
+            Column("Blob", "blob", filter_kind="none"))
+    keys = {f.key for f in resolve_filters(cols, ())}
+    assert keys == {"name"}
+
+
+def test_resolve_filters_column_override_wins_over_inference():
+    cols = (Column("Zone", "zone", "text", filter_kind="select", server_filter="ZONE_ID"),)
+    out = resolve_filters(cols, ())
+    assert out[0].kind == "select"          # override beats text→search
+    assert out[0].server_filter == "ZONE_ID"
+
+
+def test_resolve_filters_explicit_override_replaces_derived():
+    cols = (Column("Status", "status", "status"),)
+    overrides = (Filter("status", "Health", "select", server_filter="STATE"),)
+    out = resolve_filters(cols, overrides)
+    assert len(out) == 1
+    assert out[0].label == "Health"          # explicit label wins
+    assert out[0].server_filter == "STATE"
+
+
+def test_resolve_filters_keeps_non_column_explicit_filter():
+    cols = (Column("Name", "name"),)
+    overrides = (Filter("synthetic", "Synthetic", "select"),)
+    out = resolve_filters(cols, overrides)
+    keys = [f.key for f in out]
+    assert keys == ["name", "synthetic"]     # derived first, then appended
+
+
+def test_resolve_filters_no_columns_returns_overrides_only():
+    overrides = (Filter("severity", "Severity", "select"),)
+    out = resolve_filters((), overrides)
+    assert [f.key for f in out] == ["severity"]
+    assert resolve_filters((), ()) == ()

@@ -44,6 +44,57 @@ class Filter:
     server_filter: str | None = None
 
 
+# Column.kind -> inferred filter control. status enumerates, text/link search,
+# numeric-ish columns use a min/max range.
+_FILTER_KIND_BY_COLUMN_KIND = {
+    "status": "select",
+    "text": "search",
+    "link": "search",
+    "number": "range",
+    "bytes": "range",
+    "rate": "range",
+    "uptime": "range",
+}
+
+
+def _infer_filter_kind(column_kind: str) -> str:
+    """Map a Column.kind to a filter control kind (default: search)."""
+    return _FILTER_KIND_BY_COLUMN_KIND.get(column_kind, "search")
+
+
+def resolve_filters(
+    columns: tuple[Column, ...],
+    overrides: tuple[Filter, ...],
+) -> tuple[Filter, ...]:
+    """Derive the universal filter set from columns, applying overrides.
+
+    - Every filterable column yields one Filter; kind is inferred from
+      Column.kind unless Column.filter_kind overrides it.
+    - filterable=False or filter_kind="none" suppresses the column's filter.
+    - An explicit Filter in ``overrides`` whose key matches a column replaces
+      the derived one (label/kind/server_filter win). Explicit filters with no
+      matching column are appended in declaration order.
+    """
+    override_by_key = {f.key: f for f in overrides}
+    resolved: list[Filter] = []
+    seen: set[str] = set()
+    for col in columns:
+        if not col.filterable or col.filter_kind == "none":
+            continue
+        if col.key in override_by_key:
+            resolved.append(override_by_key[col.key])
+        else:
+            kind = col.filter_kind or _infer_filter_kind(col.kind)
+            resolved.append(Filter(key=col.key, label=col.label, kind=kind,
+                                   server_filter=col.server_filter))
+        seen.add(col.key)
+    for f in overrides:
+        if f.key not in seen:
+            resolved.append(f)
+            seen.add(f.key)
+    return tuple(resolved)
+
+
 @dataclass(frozen=True)
 class ModuleSpec:
     slug: str
