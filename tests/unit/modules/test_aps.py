@@ -82,3 +82,30 @@ def test_aps_paginates_beyond_500():
     responses.add(responses.POST, f"{base}/v11_0/query/ap", json=page2, status=200)
     out = aps_mod.fetch(_ctx())
     assert len(out["items"]) == 800
+
+
+def test_aps_filter_body_from_server_token():
+    from ruckus_dashboard.modules.aps import _filter_body
+    body = _filter_body({"__server": {"ZONE_ID": "z1"}})
+    assert body["filters"] == [{"type": "ZONE_ID", "value": "z1"}]
+
+
+def test_aps_filter_body_legacy_zone():
+    from ruckus_dashboard.modules.aps import _filter_body
+    body = _filter_body({"zone": "z2"})
+    assert body["filters"] == [{"type": "ZONE_ID", "value": "z2"}]
+
+
+def test_aps_filter_body_empty_when_no_zone():
+    from ruckus_dashboard.modules.aps import _filter_body
+    assert _filter_body({}) == {}
+    assert _filter_body(None) == {}
+
+
+def test_aps_zone_column_advertises_server_filter():
+    from ruckus_dashboard.modules import MODULES
+    by_key = {f.key: f for f in MODULES["aps"].resolved_filters}
+    assert by_key["zone"].server_filter == "ZONE_ID"
+    assert by_key["zone"].kind == "select"
+    # status still derives as a select from the status-kind column
+    assert by_key["status"].kind == "select"

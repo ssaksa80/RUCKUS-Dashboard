@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import register
-from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
+from ._base import Column, FetcherContext, ModuleSpec, TabSpec
 from ..clients.smartzone import smartzone_query_paged
 
 POLL_SECONDS = 30
@@ -74,11 +74,14 @@ def merge(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _filter_body(filters: dict | None) -> dict:
-    """Filter portion of a /query/ap body (page/limit are added by the pager)."""
-    f = filters or {}
-    if f.get("zone"):
-        return {"filters": [{"type": "ZONE_ID", "value": f["zone"]}]}
-    return {}
+    """Filter portion of a /query/ap body (page/limit are added by the pager).
+
+    Delegates to smartzone_query_body so push-down is token-driven: it honors
+    both the resolved-filter tokens under ``__server`` and the legacy ``zone``
+    key. Page/limit are stripped here because the pager owns them."""
+    from ..clients.smartzone import smartzone_query_body
+    body = smartzone_query_body(filters or {})
+    return {"filters": body["filters"]} if "filters" in body else {}
 
 
 def _normalize(row: dict) -> dict:
@@ -124,16 +127,12 @@ register(ModuleSpec(
     columns=(
         Column("Name", "name"),
         Column("Model", "model"),
-        Column("Zone", "zone"),
+        Column("Zone", "zone", filter_kind="select", server_filter="ZONE_ID"),
         Column("Status", "status", "status"),
         Column("Clients", "clients", "number"),
         Column("Signal dB", "signal_db", "number"),
         Column("Firmware", "fw"),
         Column("IP", "ip"),
         Column("MAC", "mac"),
-    ),
-    filters=(
-        Filter("zone", "Zone", "select"),
-        Filter("status", "Status", "select"),
     ),
 ))
