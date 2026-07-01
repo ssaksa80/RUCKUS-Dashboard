@@ -53,6 +53,8 @@ def build_config(instance_path: str) -> dict:
         "RUCKUS_MAX_INFLIGHT_PER_MODULE": _int_env("RUCKUS_MAX_INFLIGHT_PER_MODULE", 1),
         "RUCKUS_WARMUP_WORKERS": _int_env("RUCKUS_WARMUP_WORKERS", 4),
         "RUCKUS_WARMUP_TIMEOUT": _float_env("RUCKUS_WARMUP_TIMEOUT", 30.0),
+        # ─── production WSGI (opt-in waitress behind a TLS proxy) ─
+        "RUCKUS_WSGI_THREADS": _int_env("RUCKUS_WSGI_THREADS", 4),
     }
 
 

@@ -32,6 +32,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--allowed-hosts", default=None,
                    help="SSRF allow-list (comma-separated).")
     p.add_argument("--debug", action="store_true", help="Expose API debug output.")
+    p.add_argument("--server", choices=["werkzeug", "waitress"], default=None,
+                   help="WSGI server. 'werkzeug' (default) serves self-signed "
+                        "HTTPS standalone; 'waitress' serves plain HTTP for a "
+                        "reverse proxy that terminates TLS (needs the [server] "
+                        "extra). Env: RUCKUS_WSGI_SERVER (this flag wins).")
     p.add_argument("--version", action="version", version=f"{APP_NAME} {APP_VERSION}")
 
     # ─── headless data-dump mode (no Flask server) ──────────────────
@@ -216,6 +221,58 @@ def open_browser_once(url: str) -> None:
     threading.Thread(target=lambda: webbrowser.open(url), daemon=True).start()
 
 
+def _resolve_server(args: argparse.Namespace) -> str:
+    """WSGI server selection: --server flag > RUCKUS_WSGI_SERVER env > werkzeug.
+
+    Kept separate from _serve so the precedence is unit-testable without
+    starting a server.
+    """
+    import os
+    if getattr(args, "server", None):
+        return args.server
+    env = os.getenv("RUCKUS_WSGI_SERVER")
+    if env in {"werkzeug", "waitress"}:
+        return env
+    return "werkzeug"
+
+
+def _serve(app, bind_host: str, port: int, server: str,
+           cert_file, key_file, threads: int = 4) -> None:
+    """Dispatch to the selected WSGI server. Extracted from main() so the
+    branch (and its ssl_context / no-ssl_context behavior) is testable without
+    binding a socket — tests monkeypatch app.run and waitress.serve.
+
+    - werkzeug (default): self-signed HTTPS, exactly the standalone behavior.
+    - waitress: plain HTTP (TLS terminated by the reverse proxy), single
+      process, multi-thread. Imported lazily so the [server] extra is only
+      required on this path.
+    """
+    if server == "waitress":
+        try:
+            from waitress import serve as _waitress_serve
+        except ImportError:
+            print(
+                "The 'waitress' server was requested but is not installed. "
+                "Install the optional extra:\n"
+                "    pip install -e 'RUCKUS[server]'\n"
+                "(or run with the default --server werkzeug for self-signed HTTPS).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(
+            f"Serving plain HTTP on http://{_browser_host(bind_host)}:{port} "
+            "via waitress (single process). TLS MUST be terminated by your "
+            "reverse proxy (e.g. nginx) — do not expose this port directly."
+        )
+        _waitress_serve(app, host=bind_host, port=port, threads=threads)
+        return
+
+    # werkzeug (default): self-signed HTTPS standalone.
+    app.run(host=bind_host, port=port,
+            ssl_context=(str(cert_file), str(key_file)),
+            debug=False, use_reloader=False, threaded=True)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     if getattr(args, "probe_switchm", None):
@@ -240,8 +297,10 @@ def main(argv: list[str] | None = None) -> None:
 
     app = create_app(overrides or None)
     bind_host = app.config["APP_HOST"]
+    # SSRF guard runs before serving on BOTH paths (waitress and werkzeug).
     require_allowlist_for_bind(bind_host, app.config["RUCKUS_HOST_ALLOWLIST"])
 
+    server = _resolve_server(args)
     requested_port = int(app.config["APP_PORT"])
 
     print(port_self_test_script_block(bind_host, requested_port))
@@ -249,8 +308,15 @@ def main(argv: list[str] | None = None) -> None:
         bind_host, requested_port, app.config["APP_AUTO_PORT"],
         scan_limit=app.config["APP_PORT_SCAN_LIMIT"],
     )
-    cert_file, key_file = ensure_self_signed_cert(app.instance_path)
-    url = f"https://{_browser_host(bind_host)}:{port}"
+
+    # waitress serves plain HTTP (proxy terminates TLS) — no self-signed cert.
+    if server == "waitress":
+        cert_file = key_file = None
+        scheme = "http"
+    else:
+        cert_file, key_file = ensure_self_signed_cert(app.instance_path)
+        scheme = "https"
+    url = f"{scheme}://{_browser_host(bind_host)}:{port}"
 
     print(f"{APP_NAME} v{APP_VERSION}")
     if used_random_port:
@@ -260,9 +326,8 @@ def main(argv: list[str] | None = None) -> None:
         open_browser_once(url)
 
     try:
-        app.run(host=bind_host, port=port,
-                ssl_context=(str(cert_file), str(key_file)),
-                debug=False, use_reloader=False, threaded=True)
+        _serve(app, bind_host, port, server, cert_file, key_file,
+               threads=int(app.config["RUCKUS_WSGI_THREADS"]))
     except KeyboardInterrupt:
         import os
         os._exit(0)
