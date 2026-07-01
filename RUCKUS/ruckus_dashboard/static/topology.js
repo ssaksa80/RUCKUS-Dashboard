@@ -73,6 +73,23 @@ function nodeRadius(n) {
   return NODE_R[n.type] || 16;
 }
 
+const SEVERITY_BASE = { offline: 0.7, flagged: 0.45, online: 0.18, unknown: 0.05 };
+
+function healthWeight(n) {
+  // Severity scalar in [0,1] driving health-glow size/glow. Monotonic in
+  // status (offline > flagged > online > unknown); within a status, grows
+  // with the fraction of down APs and with active alarm count. Never NaN.
+  const base = SEVERITY_BASE[n.status] != null ? SEVERITY_BASE[n.status] : SEVERITY_BASE.unknown;
+  const meta = n.meta || {};
+  const total = Number(meta.ap_total) || 0;
+  const down = Number(meta.ap_down) || 0;
+  const downFrac = total > 0 ? down / total : 0;
+  const alarms = Number(meta.alarm_count) || 0;
+  const alarmBoost = Math.min(0.2, alarms * 0.05);
+  const w = base + downFrac * 0.25 + alarmBoost;
+  return Math.max(0, Math.min(1, w));
+}
+
 function layoutGraph(nodes, edges, saved, pinned) {
   saved = saved || {}; pinned = pinned || new Set();
   const pos = {};
@@ -669,6 +686,6 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
 // sync with the pure functions exercised by tests/integration/test_topology_node.py.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath,
+    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight,
   };
 }
