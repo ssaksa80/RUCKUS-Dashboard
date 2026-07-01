@@ -177,3 +177,12 @@ def test_dashboard_js_motion_is_fail_open():
         body = c.get("/static/dashboard.js").data.decode()
         assert "function _motion" in body  # try/catch wrapper around RuckusMotion calls
         assert "try {" in body
+
+
+def test_dashboard_js_health_bar_counts_up():
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        # the health-value count-up must be inside applyHealthState
+        fn = body.split("function applyHealthState", 1)[1].split("function renderHealthBar", 1)[0]
+        assert "animateCount" in fn, "applyHealthState must count up the chip value"

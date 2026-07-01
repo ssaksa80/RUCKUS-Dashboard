@@ -829,7 +829,12 @@ function applyHealthState(slug, status, summary) {
   if (!v) return;
   if (status === "done") {
     const n = pickSummaryNumber(summary);
-    v.textContent = n === undefined ? "0" : formatKpiValue(n);
+    const num = Number(n);
+    if (n !== undefined && typeof n !== "object" && isFinite(num)) {
+      _motion(m => m.animateCount(v, num, { fmt: String, duration: 320 }));
+    } else {
+      v.textContent = n === undefined ? "0" : formatKpiValue(n);
+    }
     if (chip) {
       if ((slug === "alarms" || slug === "rogues") && Number(n) > 0) chip.classList.add("danger");
       else chip.classList.remove("danger");
