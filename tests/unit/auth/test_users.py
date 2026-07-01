@@ -10,7 +10,7 @@ import pytest
 
 from ruckus_dashboard import db as dbmod
 from ruckus_dashboard.auth import users
-from ruckus_dashboard.db.models import AuditLog, Base, Role, Tenant, User
+from ruckus_dashboard.db.models import Base, Role, Tenant, User
 
 
 @pytest.fixture
