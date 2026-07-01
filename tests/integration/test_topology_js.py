@@ -53,3 +53,15 @@ def test_topology_css_has_glow_and_reduced_motion():
     css = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css").read_text(encoding="utf-8")
     for rule in [".topo-node.glow", "--glow", "prefers-reduced-motion"]:
         assert rule in css, f"missing {rule}"
+
+
+def test_topology_template_has_ribbon_and_problems_toggle():
+    html = pathlib.Path("RUCKUS/ruckus_dashboard/templates/topology.html").read_text(encoding="utf-8")
+    for hook in ["data-topo-ribbon", "data-topo-problems"]:
+        assert hook in html, f"missing {hook}"
+
+
+def test_topology_css_has_ribbon():
+    css = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css").read_text(encoding="utf-8")
+    for rule in [".topo-ribbon", ".rib-offline"]:
+        assert rule in css, f"missing {rule}"
