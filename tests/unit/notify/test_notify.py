@@ -592,6 +592,51 @@ def test_reconcile_flap_within_debounce_suppressed():
     assert new_devices["ap:aa"].online is True
 
 
+# ── outage: fetch-failed device type must not go offline ──────────────────
+
+def test_reconcile_unfetched_kind_carries_forward_no_event():
+    """A committed-online AP whose kind was NOT fetched this tick must be
+    carried forward unchanged (still online) and emit NO offline event, even
+    when advanced well past the debounce window.
+
+    This guards against a per-type fetch outage (e.g. the AP endpoint down)
+    marking every previously-online device of that type offline — a false
+    offline alert storm.
+    """
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    # AP absent from snapshot because its fetcher raised — kind not in
+    # fetched_kinds. Switches WERE fetched (present here for realism).
+    snap = _make_snapshot([("sw:s1", "switch", "SW-1", "Core", True, "online")])
+    cfg = {"debounce_seconds": 120, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(
+        prev, snap, cfg, now=99999.0, fetched_kinds={"switch", "controller"}
+    )
+    assert events == [], "unfetched AP kind must not produce an offline event"
+    # AP carried forward committed-online, no pending window opened.
+    assert new_devices["ap:aa"].online is True
+    assert new_devices["ap:aa"].pending_since is None
+    assert new_devices["ap:aa"].pending_target is None
+
+
+def test_reconcile_genuinely_gone_within_fetched_kind_still_offline():
+    """Guard the happy path: a device absent from the snapshot whose kind WAS
+    fetched this tick is genuinely gone and must still fire offline."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    # AP kind fetched, but this AP is missing from the snapshot → truly gone.
+    snap = _make_snapshot([("ap:bb", "ap", "AP-2", "HQ", True, "online")])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(
+        prev, snap, cfg, now=2000.0, fetched_kinds={"ap"}
+    )
+    offline = [e for e in events if e.kind == "offline"]
+    assert len(offline) == 1
+    assert offline[0].key == "ap:aa"
+    assert offline[0].raw_status == "missing"
+    assert new_devices["ap:aa"].online is False
+
+
 # ── outage: render_alert ──────────────────────────────────────────────────
 
 def _make_event(kind, key, typ, name, group, ts=5000.0):
@@ -881,7 +926,7 @@ def test_collect_device_snapshot_ap_row():
         "switches": MagicMock(fetcher=lambda ctx: {"items": []}),
         "controller": MagicMock(fetcher=lambda ctx: {"items": []}),
     }):
-        snapshot = collect_device_snapshot(conn, cfg)
+        snapshot, fetched_kinds = collect_device_snapshot(conn, cfg)
 
     assert "ap:aa:bb:cc" in snapshot
     ds = snapshot["ap:aa:bb:cc"]
@@ -889,6 +934,7 @@ def test_collect_device_snapshot_ap_row():
     assert ds.name == "AP-1"
     assert ds.group == "HQ"
     assert ds.online is False
+    assert fetched_kinds == {"ap", "switch", "controller"}
 
 
 def test_collect_device_snapshot_switch_row():
@@ -907,13 +953,14 @@ def test_collect_device_snapshot_switch_row():
         "switches": MagicMock(fetcher=lambda ctx: {"items": [sw_row]}),
         "controller": MagicMock(fetcher=lambda ctx: {"items": []}),
     }):
-        snapshot = collect_device_snapshot(conn, cfg)
+        snapshot, fetched_kinds = collect_device_snapshot(conn, cfg)
 
     assert "switch:SW-ID-1" in snapshot
     ds = snapshot["switch:SW-ID-1"]
     assert ds.type == "switch"
     assert ds.online is True
     assert ds.group == "Core"
+    assert fetched_kinds == {"ap", "switch", "controller"}
 
 
 def test_collect_device_snapshot_controller_node():
@@ -929,13 +976,14 @@ def test_collect_device_snapshot_controller_node():
         "switches": MagicMock(fetcher=lambda ctx: {"items": []}),
         "controller": MagicMock(fetcher=lambda ctx: {"items": [ctrl_row]}),
     }):
-        snapshot = collect_device_snapshot(conn, cfg)
+        snapshot, fetched_kinds = collect_device_snapshot(conn, cfg)
 
     assert "controller:node-1" in snapshot
     ds = snapshot["controller:node-1"]
     assert ds.type == "controller"
     assert ds.online is True
     assert ds.name == "SZ-Node-1"
+    assert fetched_kinds == {"ap", "switch", "controller"}
 
 
 def test_collect_device_snapshot_fetch_failure_leaves_type_absent():
@@ -957,12 +1005,15 @@ def test_collect_device_snapshot_fetch_failure_leaves_type_absent():
         "switches": MagicMock(fetcher=_bad_fetch),
         "controller": MagicMock(fetcher=lambda ctx: {"items": []}),
     }):
-        snapshot = collect_device_snapshot(conn, cfg)
+        snapshot, fetched_kinds = collect_device_snapshot(conn, cfg)
 
     # AP is present; switch fetch failed so no switch keys.
     assert "ap:aa:bb" in snapshot
     sw_keys = [k for k in snapshot if k.startswith("switch:")]
     assert sw_keys == []
+    # The failed kind is excluded from fetched_kinds; the others are present.
+    assert "switch" not in fetched_kinds
+    assert fetched_kinds == {"ap", "controller"}
 
 
 # ── scheduler: baseline-spam fix (audit #4) ──────────────────────────────

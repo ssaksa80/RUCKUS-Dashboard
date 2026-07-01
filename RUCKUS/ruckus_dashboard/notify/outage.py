@@ -82,17 +82,33 @@ class OutageEngine:
         snapshot: dict[str, DeviceStatus],
         cfg: dict[str, Any],
         now: float | None = None,
+        fetched_kinds: set[str] | None = None,
     ) -> tuple[list[OutageEvent], dict[str, DeviceStatus]]:
         """Diff *snapshot* against *prev_devices* to produce transition events.
 
         Returns (events, new_devices).  new_devices is the next committed state
         to be persisted by the caller.
 
+        *fetched_kinds* is the set of device kinds (``DeviceStatus.type`` values,
+        e.g. ``{"ap", "switch", "controller"}``) whose fetch SUCCEEDED this tick.
+        A committed device whose kind is NOT in this set is carried forward
+        verbatim — its committed status and any pending debounce window are
+        preserved and no event is emitted for it. This prevents a per-type fetch
+        outage (e.g. the AP endpoint being down) from marking every device of
+        that type offline. ``None`` (the default) means "treat all kinds as
+        fetched" — every prev device participates in missing→offline detection,
+        which is the correct behavior when the caller does not track per-kind
+        fetch success.
+
         Rules:
         - Empty prev_devices → baseline seeding: commit snapshot silently,
           emit no events.
         - Per device key (union of prev ∪ snapshot keys):
-          - Absent from snapshot → treated as offline (device disappeared).
+          - Committed device of an UNFETCHED kind → carried forward unchanged,
+            no event (its absence from the snapshot is a fetch failure, not a
+            real disappearance).
+          - Absent from snapshot within a FETCHED kind → treated as offline
+            (device genuinely disappeared).
           - Committed state matches observed → clear any pending debounce.
           - Differs from committed and no pending → start debounce window.
           - Differs from committed and pending has matured → commit + emit event.
@@ -126,6 +142,21 @@ class OutageEngine:
         for key in all_keys:
             current = snapshot.get(key)
             prev = prev_devices.get(key)
+
+            # Fetch-failure guard: a committed device absent from the snapshot
+            # whose kind was NOT fetched this tick is carried forward verbatim
+            # (committed status + any pending window preserved), with no event.
+            # Its absence is a per-type fetch outage, not a real disappearance.
+            # (A device present in the snapshot always has a fetched kind, so
+            # only the snapshot-absent case can be an unfetched kind.)
+            if (
+                current is None
+                and prev is not None
+                and fetched_kinds is not None
+                and prev.type not in fetched_kinds
+            ):
+                new_devices[key] = prev
+                continue
 
             # Observed state: absent from snapshot = offline.
             if current is not None:

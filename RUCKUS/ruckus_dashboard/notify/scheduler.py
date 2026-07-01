@@ -49,12 +49,20 @@ def collect_report_data(connection, config: dict) -> dict[str, Any]:
     return out
 
 
-def collect_device_snapshot(connection, config: dict) -> dict[str, DeviceStatus]:
+def collect_device_snapshot(
+    connection, config: dict
+) -> tuple[dict[str, DeviceStatus], set[str]]:
     """Fetch APs, switches, and controller nodes; normalize to DeviceStatus.
 
-    Each fetcher is isolated: if one throws, that device type is absent from
-    the snapshot (left unchanged in committed state — not marked offline).
-    This mirrors collect_report_data's per-slug try/except at scheduler.py:34-38.
+    Returns ``(snapshot, fetched_kinds)`` where *fetched_kinds* is the set of
+    device kinds (``"ap"``, ``"switch"``, ``"controller"``) whose fetch
+    SUCCEEDED this tick. Each fetcher is isolated: if one throws, that device
+    type is absent from *snapshot* AND absent from *fetched_kinds*. The caller
+    passes *fetched_kinds* to ``OutageEngine.reconcile`` so that a failed type's
+    committed devices are carried forward unchanged rather than being marked
+    offline — a per-type fetch outage must not trigger a false offline storm.
+    A type that fetched successfully but returned zero devices IS in
+    *fetched_kinds* (empty result is real; its committed devices go offline).
     """
     from ..modules._base import FetcherContext
     from ..infra.capability_gate import CapabilityGate
@@ -65,6 +73,7 @@ def collect_device_snapshot(connection, config: dict) -> dict[str, DeviceStatus]
         connection_label=getattr(connection, "display_name", ""),
     )
     snapshot: dict[str, DeviceStatus] = {}
+    fetched_kinds: set[str] = set()
 
     # ── APs ───────────────────────────────────────────────────────────────
     try:
@@ -83,6 +92,7 @@ def collect_device_snapshot(connection, config: dict) -> dict[str, DeviceStatus]
                 raw_status=raw_status,
                 last_change=0.0,
             )
+        fetched_kinds.add("ap")
     except Exception:  # noqa: BLE001
         LOG.exception("notify: ap fetch failed for device snapshot")
 
@@ -103,6 +113,7 @@ def collect_device_snapshot(connection, config: dict) -> dict[str, DeviceStatus]
                 raw_status=raw_status,
                 last_change=0.0,
             )
+        fetched_kinds.add("switch")
     except Exception:  # noqa: BLE001
         LOG.exception("notify: switch fetch failed for device snapshot")
 
@@ -123,10 +134,11 @@ def collect_device_snapshot(connection, config: dict) -> dict[str, DeviceStatus]
                 raw_status=raw_status,
                 last_change=0.0,
             )
+        fetched_kinds.add("controller")
     except Exception:  # noqa: BLE001
         LOG.exception("notify: controller fetch failed for device snapshot")
 
-    return snapshot
+    return snapshot, fetched_kinds
 
 
 def state_from_data(data: dict[str, Any]) -> dict[str, Any]:
@@ -271,17 +283,21 @@ class NotifyScheduler:
         state = self._store.load()
         prev_devices: dict[str, DeviceStatus] = state.get("devices") or {}
 
-        # Collect current device snapshot.
-        snapshot = collect_device_snapshot(connection, self._app_config)
+        # Collect current device snapshot + which kinds fetched successfully.
+        snapshot, fetched_kinds = collect_device_snapshot(
+            connection, self._app_config
+        )
 
-        # Reconcile: pure function, no I/O.
+        # Reconcile: pure function, no I/O. Devices of a kind that FAILED to
+        # fetch this tick are carried forward (not marked offline).
         reconcile_cfg = {
             "debounce_seconds": int(alerts_cfg.get("debounce_seconds", 120)),
             "recovery": bool(alerts_cfg.get("recovery", True)),
             "offline_threshold": int(alerts_cfg.get("offline_threshold", 1)),
         }
         events, new_devices = OutageEngine.reconcile(
-            prev_devices, snapshot, reconcile_cfg, now=now
+            prev_devices, snapshot, reconcile_cfg, now=now,
+            fetched_kinds=fetched_kinds,
         )
 
         # Persist new state BEFORE dispatch (save-first semantics — see spec §4.8).
