@@ -345,3 +345,36 @@ body.dso-mode .topo-ribbon .rib-item b{font-size:2rem}
   /* Preserve SP4's static-pulse reset so a flagged node still reads clearly. */
   .topo-node.pulse > circle { stroke-opacity: 1; }
 }
+
+/* ── State glow (ambient, keyed to classes JS/templates already set) ──── */
+@keyframes glow-critical-breathe {
+  0%,
+  100% { box-shadow: 0 0 0 1px var(--glow-critical); }
+  50% { box-shadow: 0 0 14px 2px var(--glow-critical); }
+}
+
+/* KPI value glow by health. .ok = faint static rim, .watch = steady halo,
+   .critical = breathing halo. JS maps state→class in renderModule (Task 6). */
+.kpi-card.ok .kpi-value { text-shadow: 0 0 6px var(--glow-ok); }
+.kpi-card.watch .kpi-value { text-shadow: 0 0 9px var(--glow-watch); }
+.kpi-card.critical .kpi-value {
+  text-shadow: 0 0 11px var(--glow-critical);
+  animation: glow-critical-breathe var(--pulse-critical-period) ease-in-out infinite;
+}
+
+/* Status pills + persistent health chip danger state. */
+.status-complete { box-shadow: 0 0 6px var(--glow-ok); }
+.status-partial { box-shadow: 0 0 8px var(--glow-watch); }
+.status-error {
+  box-shadow: 0 0 10px var(--glow-critical);
+  animation: glow-critical-breathe var(--pulse-critical-period) ease-in-out infinite;
+}
+.health-chip.danger {
+  box-shadow: 0 0 9px var(--glow-critical);
+  animation: glow-critical-breathe var(--pulse-critical-period) ease-in-out infinite;
+}
+
+/* Re-token the existing topology highlight/pulse to the shared critical glow
+   (spec §4.3.5). topo-pulse keyframe stays as-is; this sibling rule wins by
+   source order over the earlier #4cc9f0 highlight shadow. */
+.topo-node.highlight > circle { filter: drop-shadow(0 0 8px var(--glow-critical)); }
