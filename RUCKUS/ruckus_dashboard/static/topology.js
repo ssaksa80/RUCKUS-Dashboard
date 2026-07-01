@@ -182,6 +182,32 @@ function layoutGraph(nodes, edges, saved, pinned) {
   return pos;
 }
 
+const FLOW_COL_X = { 0: 0, 1: 520, 2: 1040 };
+const FLOW_ROW_GAP = 84;
+
+function flowColumn(type) {
+  if (type === "controller") return 0;
+  if (type === "zone" || type === "group" || type === "stack") return 1;
+  return 2; // switch | ap | more
+}
+
+function layoutLayered(nodes, edges) {
+  // Deterministic left→right layered DAG: column by tier, evenly spaced rows
+  // within a column (centred vertically). Stable ordering = input order, so
+  // identical input yields identical output. All coordinates finite.
+  void edges; // edges drive ribbons in renderFlow, not placement
+  const cols = { 0: [], 1: [], 2: [] };
+  nodes.forEach(n => { cols[flowColumn(n.type)].push(n); });
+  const pos = {};
+  Object.keys(cols).forEach(k => {
+    const list = cols[k];
+    const x = FLOW_COL_X[k];
+    const h = (list.length - 1) * FLOW_ROW_GAP;
+    list.forEach((n, i) => { pos[n.id] = { x, y: i * FLOW_ROW_GAP - h / 2 }; });
+  });
+  return pos;
+}
+
 function refanChildren(parentId, positions, nodes, edges, controllerId) {
   // Re-arrange a dropped parent's children in an arc facing away from the
   // controller at the parent's new position, then push siblings ≥50 apart.
@@ -750,6 +776,6 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
 // sync with the pure functions exercised by tests/integration/test_topology_node.py.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly,
+    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly, layoutLayered,
   };
 }

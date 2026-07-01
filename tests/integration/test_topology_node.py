@@ -124,3 +124,40 @@ def test_filter_problems_only_empty_when_all_green():
         "console.log(JSON.stringify(r.nodes.map(n=>n.id)));"
     )
     assert got == []
+
+
+def test_layout_layered_columns_finite_and_deterministic():
+    snippet = (
+        "const nodes=["
+        "{id:'controller',type:'controller'},"
+        "{id:'z1',type:'zone'},{id:'g1',type:'group'},"
+        "{id:'s1',type:'switch'},{id:'a1',type:'ap'},{id:'a2',type:'ap'}];"
+        "const edges=["
+        "{source:'controller',target:'z1'},{source:'controller',target:'g1'},"
+        "{source:'g1',target:'s1'},{source:'z1',target:'a1'},{source:'z1',target:'a2'}];"
+        "const p1=T.layoutLayered(nodes,edges);"
+        "const p2=T.layoutLayered(nodes,edges);"
+        "const xs=Object.values(p1).map(p=>p.x);"
+        "const allFinite=Object.values(p1).every(p=>isFinite(p.x)&&isFinite(p.y));"
+        "console.log(JSON.stringify({"
+        "deterministic:JSON.stringify(p1)===JSON.stringify(p2),"
+        "allFinite,"
+        "ctrlX:p1.controller.x, z1X:p1.z1.x, s1X:p1.s1.x,"
+        "colsAscend:(p1.controller.x<p1.z1.x)&&(p1.z1.x<p1.s1.x)}));"
+    )
+    got = _run(snippet)
+    assert got["deterministic"] is True
+    assert got["allFinite"] is True
+    assert got["colsAscend"] is True
+
+
+def test_layout_layered_separates_siblings_vertically():
+    got = _run(
+        "const nodes=[{id:'controller',type:'controller'},"
+        "{id:'z1',type:'zone'},{id:'a1',type:'ap'},{id:'a2',type:'ap'}];"
+        "const edges=[{source:'controller',target:'z1'},"
+        "{source:'z1',target:'a1'},{source:'z1',target:'a2'}];"
+        "const p=T.layoutLayered(nodes,edges);"
+        "console.log(JSON.stringify(p.a1.y!==p.a2.y));"
+    )
+    assert got is True
