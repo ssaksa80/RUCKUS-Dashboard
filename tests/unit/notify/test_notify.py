@@ -372,3 +372,125 @@ def test_device_online_controller():
         assert device_online("controller", state) is True, state
     assert device_online("controller", "disconnected") is False
     assert device_online("controller", "") is False
+
+
+# ── outage: OutageEngine.reconcile ────────────────────────────────────────
+
+def _make_snapshot(entries: list[tuple]) -> dict:
+    """entries: (key, type, name, group, online, raw_status)"""
+    from ruckus_dashboard.notify.outage import DeviceStatus
+    return {
+        key: DeviceStatus(key=key, type=typ, name=name, group=grp,
+                          online=on, raw_status=rs, last_change=0.0)
+        for key, typ, name, grp, on, rs in entries
+    }
+
+
+def test_reconcile_baseline_seeding_no_events():
+    """First call (empty prior devices) seeds silently — no events emitted."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    snapshot = _make_snapshot([
+        ("ap:aa", "ap", "AP-1", "HQ", False, "offline"),
+        ("ap:bb", "ap", "AP-2", "HQ", True, "online"),
+    ])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile({}, snapshot, cfg, now=1000.0)
+    assert events == []
+    assert new_devices["ap:aa"].online is False
+    assert new_devices["ap:bb"].online is True
+
+
+def test_reconcile_offline_transition_fires_immediately_when_no_debounce():
+    """Previously-online device goes offline; debounce=0 fires on first tick."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev_devices = _make_snapshot([
+        ("ap:aa", "ap", "AP-1", "HQ", True, "online"),
+    ])
+    snapshot = _make_snapshot([
+        ("ap:aa", "ap", "AP-1", "HQ", False, "offline"),
+    ])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(prev_devices, snapshot, cfg, now=2000.0)
+    assert len(events) == 1
+    assert events[0].kind == "offline"
+    assert events[0].key == "ap:aa"
+    assert events[0].name == "AP-1"
+    assert events[0].group == "HQ"
+    assert events[0].ts == 2000.0
+
+
+def test_reconcile_stable_online_no_event():
+    """Device that was online and stays online emits nothing."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=3000.0)
+    assert events == []
+
+
+def test_reconcile_stable_offline_no_event():
+    """Pre-existing outage (committed offline) stays offline — no re-alert."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", False, "offline")])
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", False, "offline")])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=4000.0)
+    assert events == []
+
+
+def test_reconcile_recovery_event_when_enabled():
+    """Offline device comes back; recovery=True emits online event."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("sw:s1", "switch", "SW-1", "Core", False, "offline")])
+    snap = _make_snapshot([("sw:s1", "switch", "SW-1", "Core", True, "online")])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=5000.0)
+    assert len(events) == 1
+    assert events[0].kind == "online"
+    assert events[0].key == "sw:s1"
+
+
+def test_reconcile_recovery_suppressed_when_disabled():
+    """Offline device comes back; recovery=False emits nothing."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("sw:s1", "switch", "SW-1", "Core", False, "offline")])
+    snap = _make_snapshot([("sw:s1", "switch", "SW-1", "Core", True, "online")])
+    cfg = {"debounce_seconds": 0, "recovery": False, "offline_threshold": 1}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=6000.0)
+    assert events == []
+
+
+def test_reconcile_offline_threshold_suppresses_small_batch():
+    """`offline_threshold=3` suppresses a batch of only 2 newly-offline devices."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([
+        ("ap:a1", "ap", "AP-1", "HQ", True, "online"),
+        ("ap:a2", "ap", "AP-2", "HQ", True, "online"),
+    ])
+    snap = _make_snapshot([
+        ("ap:a1", "ap", "AP-1", "HQ", False, "offline"),
+        ("ap:a2", "ap", "AP-2", "HQ", False, "offline"),
+    ])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 3}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=7000.0)
+    # only 2 newly offline, threshold=3 — suppressed
+    offline_events = [e for e in events if e.kind == "offline"]
+    assert offline_events == []
+
+
+def test_reconcile_offline_threshold_fires_when_met():
+    """`offline_threshold=2` fires when exactly 2 devices newly go offline."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([
+        ("ap:a1", "ap", "AP-1", "HQ", True, "online"),
+        ("ap:a2", "ap", "AP-2", "HQ", True, "online"),
+    ])
+    snap = _make_snapshot([
+        ("ap:a1", "ap", "AP-1", "HQ", False, "offline"),
+        ("ap:a2", "ap", "AP-2", "HQ", False, "offline"),
+    ])
+    cfg = {"debounce_seconds": 0, "recovery": True, "offline_threshold": 2}
+    events, _ = OutageEngine.reconcile(prev, snap, cfg, now=8000.0)
+    offline_events = [e for e in events if e.kind == "offline"]
+    assert len(offline_events) == 2
