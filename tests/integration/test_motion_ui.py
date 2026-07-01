@@ -188,6 +188,23 @@ def test_dashboard_js_health_bar_counts_up():
         assert "animateCount" in fn, "applyHealthState must count up the chip value"
 
 
+def test_dashboard_js_health_bar_writes_value_before_motion_enhance():
+    """SP5 fail-open: the numeric 'done' branch must write the value to
+    textContent BEFORE calling _motion(...animateCount...), so the value still
+    renders if motion.js is absent. Guard against a motion-only write."""
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        fn = body.split("function applyHealthState", 1)[1].split("function renderHealthBar", 1)[0]
+        done = fn.split("=== \"done\"", 1)[1].split("else if", 1)[0]
+        # match the call form ``animateCount(`` so prose comments can't false-match
+        assert "animateCount(" in done
+        assert "textContent =" in done, "numeric branch must pre-write textContent"
+        # the plain write must precede the motion enhancement
+        assert done.index("textContent =") < done.index("animateCount("), \
+            "value must be written BEFORE _motion enhance (fail-open)"
+
+
 def test_dashboard_js_tile_counts_up_and_pulses():
     app = create_app({"SECRET_KEY": "t"})
     with app.test_client() as c:
@@ -196,6 +213,21 @@ def test_dashboard_js_tile_counts_up_and_pulses():
         fn = body.split("const updateTile", 1)[1].split("const finish", 1)[0]
         assert "animateCount" in fn, "updateTile must count up the resolved value"
         assert "pulse(tile" in fn or "m.pulse(tile" in fn, "tile must pulse on resolve"
+
+
+def test_dashboard_js_tile_writes_value_before_motion_enhance():
+    """SP5 fail-open: updateTile's numeric 'done' branch must write the value to
+    textContent BEFORE the _motion(...animateCount...) enhancement."""
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        fn = body.split("const updateTile", 1)[1].split("const finish", 1)[0]
+        done = fn.split("=== \"done\"", 1)[1].split("else if", 1)[0]
+        # match the call form ``animateCount(`` so prose comments can't false-match
+        assert "animateCount(" in done
+        assert "textContent =" in done, "numeric branch must pre-write textContent"
+        assert done.index("textContent =") < done.index("animateCount("), \
+            "value must be written BEFORE _motion enhance (fail-open)"
 
 
 def test_base_html_loads_motion_before_dashboard():

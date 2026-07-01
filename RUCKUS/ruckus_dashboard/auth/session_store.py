@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import secrets
 import time
 from threading import RLock
+from typing import Callable
 
 
 @dataclass
@@ -27,10 +28,18 @@ class ConnectionConfig:
 
 
 class ConnectionStore:
-    def __init__(self, ttl_seconds: int) -> None:
+    def __init__(
+        self,
+        ttl_seconds: int,
+        on_evict: Callable[[str], None] | None = None,
+    ) -> None:
         self.ttl_seconds = ttl_seconds
         self._connections: dict[str, ConnectionConfig] = {}
         self._lock = RLock()
+        # Invoked once per TTL-evicted token, OUTSIDE the store's lock, so the
+        # callback (e.g. CapabilityRegistry.clear, which takes its own lock)
+        # cannot deadlock or nest under ours.
+        self._on_evict = on_evict
 
     def put(self, connection: ConnectionConfig) -> str:
         now = time.time()
@@ -38,19 +47,20 @@ class ConnectionStore:
         connection.last_used_at = now
         token = secrets.token_urlsafe(32)
         with self._lock:
-            self._cleanup_locked(now)
+            evicted = self._cleanup_locked(now)
             self._connections[token] = connection
+        self._notify_evicted(evicted)
         return token
 
     def get(self, token: str) -> ConnectionConfig | None:
         now = time.time()
         with self._lock:
-            self._cleanup_locked(now)
+            evicted = self._cleanup_locked(now)
             connection = self._connections.get(token)
-            if connection is None:
-                return None
-            connection.last_used_at = now
-            return connection
+            if connection is not None:
+                connection.last_used_at = now
+        self._notify_evicted(evicted)
+        return connection
 
     def remove(self, token: str) -> None:
         with self._lock:
@@ -60,7 +70,8 @@ class ConnectionStore:
         with self._lock:
             return len(self._connections)
 
-    def _cleanup_locked(self, now: float) -> None:
+    def _cleanup_locked(self, now: float) -> list[str]:
+        """Drop expired tokens and return them (caller notifies outside lock)."""
         expired = [
             token
             for token, connection in self._connections.items()
@@ -68,3 +79,10 @@ class ConnectionStore:
         ]
         for token in expired:
             self._connections.pop(token, None)
+        return expired
+
+    def _notify_evicted(self, tokens: list[str]) -> None:
+        if not self._on_evict:
+            return
+        for token in tokens:
+            self._on_evict(token)

@@ -45,6 +45,16 @@ def test_cidr_match():
     assert_host_allowed("10.0.0.55", {"RUCKUS_HOST_ALLOWLIST": al})
 
 
+def test_raw_ip_literal_honors_pinned_ip(fake_dns):
+    # Allow-listing a hostname pins its resolved IP(s). A request that arrives
+    # by that pinned IP literal (no network entry covers it) must be allowed.
+    al = HostAllowList("sz.example.com")
+    assert "10.0.0.5" in al.pinned_ips
+    assert al.host_allowed("10.0.0.5") is True
+    # A different IP that is neither pinned nor in any configured network stays blocked.
+    assert al.host_allowed("203.0.113.9") is False
+
+
 def test_disallowed_raises(fake_dns):
     al = HostAllowList("sz.example.com")
     with pytest.raises(RuckusClientError):

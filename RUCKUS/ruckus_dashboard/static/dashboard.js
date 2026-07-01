@@ -462,12 +462,19 @@ function renderFilters(root, slug, spec, items) {
     // select — options come from controller data (escape attr + text).
     const cur = state[f.key];
     const curArr = Array.isArray(cur) ? cur.map(String) : (cur ? [String(cur)] : []);
-    const values = Array.from(new Set(items.map(i => i[f.key]).filter(v => v != null && v !== "")))
-      .sort().map(v => {
-        const sel = curArr.includes(String(v)) ? " selected" : "";
+    const optionValues = Array.from(new Set(items.map(i => i[f.key]).filter(v => v != null && v !== ""))).sort();
+    // Drop a stale persisted selection no longer in the option universe, so the
+    // control doesn't silently filter to zero while visually showing "All".
+    const optionSet = new Set(optionValues.map(String));
+    if (curArr.length && curArr.some(v => !optionSet.has(v)) && activeFilters[slug]) {
+      delete activeFilters[slug][f.key];
+    }
+    const validCur = curArr.filter(v => optionSet.has(v));
+    const values = optionValues.map(v => {
+        const sel = validCur.includes(String(v)) ? " selected" : "";
         return `<option value="${_escape(v)}"${sel}>${_escape(v)}</option>`;
       }).join("");
-    const allSel = curArr.length ? "" : " selected";
+    const allSel = validCur.length ? "" : " selected";
     return `<label class="filter-control"><span>${_escape(f.label)}</span>` +
            `<select data-filter-key="${_escape(f.key)}"><option value=""${allSel}>All</option>${values}</select></label>`;
   });
@@ -831,6 +838,10 @@ function applyHealthState(slug, status, summary) {
     const n = pickSummaryNumber(summary);
     const num = Number(n);
     if (n !== undefined && typeof n !== "object" && isFinite(num)) {
+      // Fail-open: write the value first so it renders even without motion.js;
+      // animateCount reads `from` off existing textContent, so a matching
+      // pre-write is harmless (no visible jump).
+      v.textContent = String(num);
       _motion(m => m.animateCount(v, num, { fmt: String, duration: 320 }));
     } else {
       v.textContent = n === undefined ? "0" : formatKpiValue(n);
@@ -898,6 +909,9 @@ function startWarmupStream() {
       const pick = s.total ?? s.count ?? s.switches ?? Object.values(s).find(x => typeof x === "number");
       const num = Number(pick);
       if (pick !== undefined && typeof pick !== "object" && isFinite(num)) {
+        // Fail-open: write the value first so it renders even without motion.js;
+        // animateCount reads `from` off existing textContent (harmless pre-write).
+        val.textContent = String(num);
         _motion(m => m.animateCount(val, num, { fmt: String, duration: 320 }));
       } else {
         val.textContent = pick === undefined ? "0" : formatKpiValue(pick);

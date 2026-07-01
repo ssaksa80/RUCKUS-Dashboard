@@ -109,7 +109,7 @@ def _build_curated(wb: Workbook, data: dict[str, Any]) -> None:
     aps_off = sum(1 for a in aps if a.get("status") == "offline")
     sw_off = sum(1 for s in switches if str(s.get("status")).lower() not in
                  ("online", "in_service"))
-    crit = sum(int(a.get("count") or 1) for a in alarms
+    crit = sum(int(a.get("count") or 0) for a in alarms
                if a.get("severity") == "critical")
     rows = [
         ("Access points (total)", len(aps)),
@@ -118,7 +118,7 @@ def _build_curated(wb: Workbook, data: dict[str, Any]) -> None:
         ("Clients with poor signal", sum(1 for c in clients if c.get("quality") == "poor")),
         ("Switches (total)", len(switches)),
         ("Switches offline", sw_off),
-        ("Active alarms", sum(int(a.get("count") or 1) for a in alarms)),
+        ("Active alarms", sum(int(a.get("count") or 0) for a in alarms)),
         ("Critical alarms", crit),
     ]
     _header(ws, 4, ["Metric", "Value"])

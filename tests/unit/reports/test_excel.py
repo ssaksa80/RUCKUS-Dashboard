@@ -80,6 +80,24 @@ def test_build_report_legacy_dict_still_renders_curated_sheets():
     assert len(wb["Alarms"]._charts) == 1
 
 
+def test_overview_alarm_count_uses_or_zero_for_missing_or_zero_count():
+    # Parity with scheduler.py #14: an alarm whose "count" is missing/0 must
+    # contribute 0 (not a phantom 1) to the Active/Critical alarm totals.
+    data = {
+        "aps": [], "clients": [], "switches": [],
+        "alarms": [
+            {"severity": "critical"},              # missing count -> 0
+            {"severity": "critical", "count": 0},  # explicit 0    -> 0
+            {"severity": "critical", "count": 3},  # counts        -> 3
+        ],
+    }
+    ws = openpyxl.load_workbook(io.BytesIO(build_report(data)))["Overview"]
+    overview = {ws.cell(row=r, column=1).value: ws.cell(row=r, column=2).value
+                for r in range(5, ws.max_row + 1)}
+    assert overview["Active alarms"] == 3
+    assert overview["Critical alarms"] == 3
+
+
 def test_module_sheet_has_summary_list_raw_and_drill():
     blob = build_report(_model())
     wb = openpyxl.load_workbook(io.BytesIO(blob))
