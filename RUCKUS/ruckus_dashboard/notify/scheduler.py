@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 from ..modules import MODULES
+from ..reports.collect import collect_report_data  # noqa: F401  re-export (alert path)
 from .channels import CHANNELS
 from .config import load_config, smtp_password
 from .mailer import send_email
@@ -28,25 +29,6 @@ from .state_store import JsonOutageStateStore
 LOG = logging.getLogger("ruckus.notify")
 
 TICK_SECONDS = 30
-
-
-def collect_report_data(connection, config: dict) -> dict[str, Any]:
-    """Run the relevant module fetchers (dump-style) for the report/alerts."""
-    from ..modules._base import FetcherContext
-    from ..infra.capability_gate import CapabilityGate
-
-    ctx = FetcherContext(connection=connection, config=config, filters=None,
-                         capability_gate=CapabilityGate(set()),
-                         connection_label=getattr(connection, "display_name", ""))
-    out: dict[str, Any] = {}
-    for slug, key in (("aps", "aps"), ("clients", "clients"),
-                      ("alarms", "alarms"), ("switches", "switches")):
-        try:
-            out[key] = (MODULES[slug].fetcher(ctx) or {}).get("items", [])
-        except Exception:  # noqa: BLE001
-            LOG.exception("notify: %s fetch failed", slug)
-            out[key] = []
-    return out
 
 
 def collect_device_snapshot(

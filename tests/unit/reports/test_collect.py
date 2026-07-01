@@ -328,3 +328,25 @@ def test_collect_report_model_metadata_fields():
     assert model.connection_label == "SZ-PROD"
     assert model.generated_at        # ISO-ish timestamp string
     assert model.modules == []
+
+
+def test_collect_report_data_legacy_shape(monkeypatch):
+    import ruckus_dashboard.modules as modmod
+    from ruckus_dashboard.reports.collect import collect_report_data
+
+    originals = dict(modmod.MODULES)
+    try:
+        for slug in ("aps", "clients", "alarms", "switches"):
+            modmod.MODULES[slug] = dataclasses.replace(
+                modmod.MODULES[slug],
+                fetcher=lambda ctx, s=slug: {"items": [{"id": f"{s}-1",
+                                                        "status": "online"}],
+                                             "raw_count": 1},
+                drill_fetcher=None, requires_capabilities=())
+        data = collect_report_data(object(), {})
+        assert set(data.keys()) == {"aps", "clients", "alarms", "switches"}
+        assert data["aps"] == [{"id": "aps-1", "status": "online"}]
+        assert data["switches"][0]["id"] == "switches-1"
+    finally:
+        modmod.MODULES.clear()
+        modmod.MODULES.update(originals)

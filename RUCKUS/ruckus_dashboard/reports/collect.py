@@ -283,3 +283,37 @@ def collect_report_model(
 
     model.modules = [results[spec.slug] for spec in ordered]
     return model
+
+
+_LEGACY_SLUGS = ("aps", "clients", "alarms", "switches")
+
+
+def collect_report_data(connection, config: dict) -> dict[str, Any]:
+    """Backward-compatible shim for the alert path.
+
+    Returns the legacy ``{"aps":[...], "clients":[...], "alarms":[...],
+    "switches":[...]}`` dict (full normalized rows, not column-projected) so
+    ``notify.scheduler.state_from_data`` is untouched. Implemented over
+    ``collect_report_model`` so alerts and reports share one collector."""
+    from ..modules import MODULES
+    from ..modules._base import FetcherContext
+    from ..infra.capability_gate import CapabilityGate
+
+    gate = CapabilityGate(available=set())
+    out: dict[str, Any] = {}
+    for slug in _LEGACY_SLUGS:
+        spec = MODULES.get(slug)
+        if spec is None:
+            out[slug] = []
+            continue
+        ctx = FetcherContext(connection=connection, config=config, filters=None,
+                             capability_gate=gate,
+                             connection_label=getattr(connection,
+                                                      "display_name", ""))
+        try:
+            payload = spec.fetcher(ctx) or {}
+            out[slug] = list(payload.get("items") or [])
+        except Exception:  # noqa: BLE001
+            LOG.exception("report(legacy): %s fetch failed", slug)
+            out[slug] = []
+    return out
