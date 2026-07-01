@@ -327,3 +327,48 @@ def test_traffic_live_rate_from_deltas(monkeypatch):
                json={"list": [{"key": "S1", "value": 11000}]}, status=200)
         out3 = traffic_mod.fetch(ctx)
     assert out3["items"][0]["rate_bps"] == rate
+
+
+# ── outage: DeviceStatus and device_online helpers ────────────────────────
+
+def test_device_status_dataclass_fields():
+    from ruckus_dashboard.notify.outage import DeviceStatus
+    ds = DeviceStatus(
+        key="ap:aabbcc",
+        type="ap",
+        name="AP-1",
+        group="HQ",
+        online=True,
+        raw_status="online",
+        last_change=1000.0,
+    )
+    assert ds.key == "ap:aabbcc"
+    assert ds.online is True
+    assert ds.last_change == 1000.0
+    # pending fields default to None
+    assert ds.pending_since is None
+    assert ds.pending_target is None
+
+
+def test_device_online_ap():
+    from ruckus_dashboard.notify.outage import device_online
+    assert device_online("ap", "online") is True
+    assert device_online("ap", "offline") is False
+    assert device_online("ap", "unknown") is False
+
+
+def test_device_online_switch():
+    from ruckus_dashboard.notify.outage import device_online
+    assert device_online("switch", "online") is True
+    assert device_online("switch", "offline") is False
+    assert device_online("switch", "flagged") is False
+
+
+def test_device_online_controller():
+    from ruckus_dashboard.notify.outage import device_online
+    # matches controller._NODE_ONLINE exactly
+    for state in ("in_service", "online", "active", "up",
+                  "management_in_service", "service_ready"):
+        assert device_online("controller", state) is True, state
+    assert device_online("controller", "disconnected") is False
+    assert device_online("controller", "") is False
