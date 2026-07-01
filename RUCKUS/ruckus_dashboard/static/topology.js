@@ -16,6 +16,8 @@ const topoState = {
   prevTraffic: {},        // {switchId: {bytes, t}} for live-rate deltas
   rates: {},              // {switchId: bps} — real-time throughput
   legend: null, root: null,
+  problemsOnly: false,    // "Problems only" filter active
+  view: "graph",          // active view: "graph" (health wall) | "flow"
   vb: null, box: null,    // viewBox state
 };
 
@@ -226,6 +228,27 @@ function visibleGraph(nodes, edges, collapsed) {
   };
 }
 
+function filterProblemsOnly(nodes, edges) {
+  // Keep only nodes on a path to a problem (status not online/unknown), i.e.
+  // every problem node plus all of its ancestors; drop fully-green subtrees
+  // and any edge whose endpoints are not both kept.
+  const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+  void byId;
+  const parentOf = {};
+  edges.forEach(e => { parentOf[e.target] = e.source; });
+  const keep = new Set();
+  const isProblem = n => n && n.status !== "online" && n.status !== "unknown";
+  nodes.forEach(n => {
+    if (!isProblem(n)) return;
+    let cur = n.id;
+    while (cur && !keep.has(cur)) { keep.add(cur); cur = parentOf[cur]; }
+  });
+  return {
+    nodes: nodes.filter(n => keep.has(n.id)),
+    edges: edges.filter(e => keep.has(e.source) && keep.has(e.target)),
+  };
+}
+
 function animateToPositions(newPos, duration) {
   // Smoothly tween rendered nodes/edges to a new layout (easeOutCubic).
   const svg = topoState.root && topoState.root.querySelector(".topo-svg");
@@ -372,7 +395,9 @@ function renderTopology(root, payload) {
   // Collapse filter: full graph stays in state (toast diffing above), only
   // visible nodes are laid out and drawn.
   updateRates(nodes);
-  const vis = visibleGraph(nodes, edges, topoState.collapsed);
+  let vis = visibleGraph(nodes, edges, topoState.collapsed);
+  if (topoState.problemsOnly) vis = filterProblemsOnly(vis.nodes, vis.edges);
+  if (!vis.nodes.length) { canvas.innerHTML = `<p class="empty">No problems — all healthy.</p>`; updateStatusRibbon(root, nodes); return; }
   topoState.visEdges = vis.edges;
   topoState.positions = layoutGraph(vis.nodes, vis.edges, topoState.saved, topoState.pinned);
   const pos = topoState.positions;
@@ -657,6 +682,13 @@ function wireToolbar(root) {
     animateToPositions(freshLayout());
   });
 
+  const problems = root.querySelector("[data-topo-problems]");
+  if (problems) problems.addEventListener("click", () => {
+    topoState.problemsOnly = !topoState.problemsOnly;
+    problems.setAttribute("aria-pressed", String(topoState.problemsOnly));
+    rerenderFromState();
+  });
+
   const exportBtn = root.querySelector("[data-topo-export]");
   if (exportBtn) exportBtn.addEventListener("click", () => {
     try {
@@ -718,6 +750,6 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
 // sync with the pure functions exercised by tests/integration/test_topology_node.py.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts,
+    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly,
   };
 }

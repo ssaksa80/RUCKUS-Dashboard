@@ -91,3 +91,36 @@ def test_ribbon_counts_tallies_status_and_alarms():
         "console.log(JSON.stringify(T.ribbonCounts(nodes)));"
     )
     assert got == {"online": 2, "flagged": 1, "offline": 1, "alarms": 3, "total": 4}
+
+
+def test_filter_problems_only_keeps_problem_paths_drops_green():
+    got = _run(
+        "const nodes=["
+        "{id:'controller',type:'controller',status:'online',meta:{}},"
+        "{id:'zBad',type:'zone',status:'flagged',meta:{}},"
+        "{id:'apBad',type:'ap',status:'offline',meta:{}},"
+        "{id:'zGood',type:'zone',status:'online',meta:{}},"
+        "{id:'apGood',type:'ap',status:'online',meta:{}}];"
+        "const edges=["
+        "{source:'controller',target:'zBad',status:'flagged'},"
+        "{source:'zBad',target:'apBad',status:'offline'},"
+        "{source:'controller',target:'zGood',status:'online'},"
+        "{source:'zGood',target:'apGood',status:'online'}];"
+        "const r=T.filterProblemsOnly(nodes,edges);"
+        "console.log(JSON.stringify({"
+        "ids:r.nodes.map(n=>n.id).sort(),"
+        "edges:r.edges.map(e=>e.source+'>'+e.target).sort()}));"
+    )
+    assert got["ids"] == ["apBad", "controller", "zBad"]
+    assert got["edges"] == ["controller>zBad", "zBad>apBad"]
+
+
+def test_filter_problems_only_empty_when_all_green():
+    got = _run(
+        "const nodes=[{id:'controller',type:'controller',status:'online',meta:{}},"
+        "{id:'z',type:'zone',status:'online',meta:{}}];"
+        "const edges=[{source:'controller',target:'z',status:'online'}];"
+        "const r=T.filterProblemsOnly(nodes,edges);"
+        "console.log(JSON.stringify(r.nodes.map(n=>n.id)));"
+    )
+    assert got == []
