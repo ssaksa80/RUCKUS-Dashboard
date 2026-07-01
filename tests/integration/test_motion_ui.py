@@ -7,6 +7,26 @@ def _css():
     return CSS.read_text(encoding="utf-8")
 
 
+def _reduced_motion_block():
+    """Return the body of the single @media (prefers-reduced-motion: reduce)
+    block via a balanced-brace scan, so assertions about the guard test the
+    guard itself — not unrelated rules that happen to follow it in the file
+    (the SP5 motion rules are appended after the guard by design)."""
+    css = _css()
+    marker = "@media (prefers-reduced-motion: reduce)"
+    start = css.index(marker) + len(marker)
+    open_brace = css.index("{", start)
+    depth = 0
+    for i in range(open_brace, len(css)):
+        if css[i] == "{":
+            depth += 1
+        elif css[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return css[open_brace + 1:i]
+    raise AssertionError("unterminated @media (prefers-reduced-motion) block")
+
+
 def test_motion_tokens_present():
     css = _css()
     for token in [
@@ -28,8 +48,7 @@ def test_reduced_motion_global_killswitch():
 def test_reduced_motion_covers_legacy_topo_and_toast():
     """Spec §3 / Q5: the pre-existing infinite topo-pulse and toast-in must be
     brought under the reduced-motion guard (latent a11y bug fixed here)."""
-    css = _css()
-    guard = css.split("@media (prefers-reduced-motion: reduce)", 1)[1]
+    guard = _reduced_motion_block()
     assert ".topo-node.pulse > circle" in guard
     assert ".topo-toast" in guard
 
@@ -91,3 +110,14 @@ def test_dso_mode_intensifies_glow():
     css = _css()
     assert "body.dso-mode .kpi-card.critical .kpi-value" in css
     assert "body.dso-mode .health-chip.danger" in css
+
+
+def test_warmup_width_transition_preserved():
+    """The warmup bar width transition (styles.css:108) must remain; only the
+    decorative sheen is gated. Guards against a future over-broad kill-switch."""
+    css = _css()
+    assert "transition: width 0.3s" in css
+    guard = _reduced_motion_block()
+    # the guard targets the sheen pseudo-element, never the base .warmup-fill width
+    assert ".warmup-fill::after" in guard
+    assert ".warmup-fill {" not in guard
