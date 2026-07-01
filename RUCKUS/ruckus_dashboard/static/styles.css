@@ -266,3 +266,5 @@ body.dso-mode .health-bar{display:none}
 .poor-ap-chip:hover{border-color:#ff5a5f}
 /* Disabled SMTP credential fields when security = none */
 .nf-disabled{opacity:.45}
+.drill-filters { margin: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.drill-filters .filter-control { font-size: 0.85rem; }

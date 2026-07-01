@@ -154,3 +154,16 @@ def test_dashboard_js_kpi_and_poor_ap_reflect_into_selects():
         assert "ctrl.tagName === \"SELECT\"" in body
         # Single-select reflect must not assume multi-select.
         assert "band_5" in body and "poor_signal" in body
+
+
+def test_dashboard_js_drill_table_filters_present():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        for sym in ["renderDrillFilters", "_applyDrillFilters", "drillFilters",
+                    ":drill:", "data-drill-filter-key"]:
+            assert sym in body, f"missing {sym}"
+        # renderGenericTable still exists and is escape-safe
+        assert "function renderGenericTable" in body
+        assert "_escape(v ?? " in body or "_escape(v" in body

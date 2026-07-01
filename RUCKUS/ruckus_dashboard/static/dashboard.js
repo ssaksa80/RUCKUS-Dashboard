@@ -9,6 +9,8 @@ const moduleSpecs = {};
 const activeFilters = {};
 // Cache of the last items fetched per slug, so filter changes re-render locally.
 const lastItems = {};
+// Per-drill-table client filter state, namespaced "<slug>:drill:<sig>".
+const drillFilters = {};
 
 async function loadModuleSpecs() {
   if (Object.keys(moduleSpecs).length) return moduleSpecs;
@@ -493,8 +495,79 @@ function _kvListHtml(obj) {
   return `<div class="kv-list">${rows}</div>`;
 }
 
+function _columnIsNumeric(rows, col) {
+  // Numeric if every non-empty value parses as a finite number.
+  let saw = false;
+  for (const r of rows) {
+    const v = r ? r[col] : null;
+    if (v === null || v === undefined || v === "") continue;
+    saw = true;
+    if (!isFinite(Number(v))) return false;
+  }
+  return saw;
+}
+
+function _applyDrillFilters(stateKey, rows) {
+  const f = drillFilters[stateKey] || {};
+  return rows.filter(row => {
+    for (const [key, val] of Object.entries(f)) {
+      if (val === "" || val == null) continue;
+      if (key.startsWith("search:")) {
+        const col = key.slice(7);
+        if (!String(row[col] ?? "").toLowerCase().includes(String(val).toLowerCase())) return false;
+      } else if (key.startsWith("range:")) {
+        const col = key.slice(6);
+        const n = Number(row[col]);
+        const lo = val.min === "" || val.min == null ? null : Number(val.min);
+        const hi = val.max === "" || val.max == null ? null : Number(val.max);
+        if (lo == null && hi == null) continue;
+        if (!isFinite(n)) return false;
+        if (lo != null && n < lo) return false;
+        if (hi != null && n > hi) return false;
+      }
+    }
+    return true;
+  });
+}
+
+function renderDrillFilters(container, stateKey, cols, rows, onChange) {
+  const bar = cols.map(col => {
+    const numeric = _columnIsNumeric(rows, col);
+    if (numeric) {
+      return `<label class="filter-control"><span>${_escape(col)}</span>` +
+             `<input type="number" data-drill-filter-key="range:${_escape(col)}" ` +
+             `data-bound="min" placeholder="min">` +
+             `<input type="number" data-drill-filter-key="range:${_escape(col)}" ` +
+             `data-bound="max" placeholder="max"></label>`;
+    }
+    return `<label class="filter-control"><span>${_escape(col)}</span>` +
+           `<input type="search" data-drill-filter-key="search:${_escape(col)}" ` +
+           `placeholder="${_escape(col)}…"></label>`;
+  }).join("");
+  const wrap = document.createElement("div");
+  wrap.className = "filters drill-filters";
+  wrap.innerHTML = bar;
+  container.appendChild(wrap);
+  wrap.querySelectorAll("[data-drill-filter-key]").forEach(ctrl => {
+    const handler = () => {
+      const store = drillFilters[stateKey] = drillFilters[stateKey] || {};
+      const key = ctrl.dataset.drillFilterKey;
+      if (key.startsWith("range:")) {
+        const r = store[key] = store[key] || { min: null, max: null };
+        r[ctrl.dataset.bound] = ctrl.value === "" ? null : ctrl.value;
+      } else {
+        store[key] = ctrl.value;
+      }
+      onChange();
+    };
+    ctrl.addEventListener("change", handler);
+    ctrl.addEventListener("input", handler);
+  });
+}
+
 // Simple table for array-of-objects sections (ports, etc.).
-function renderGenericTable(container, rows) {
+// When stateKey is provided, prepend per-column filter controls (client-side).
+function renderGenericTable(container, rows, stateKey) {
   if (!Array.isArray(rows) || rows.length === 0) {
     container.innerHTML = `<p class="empty">No data.</p>`;
     return;
@@ -503,15 +576,30 @@ function renderGenericTable(container, rows) {
     Object.keys(r || {}).forEach(k => set.add(k));
     return set;
   }, new Set()));
-  const head = cols.map(c => `<th>${_escape(c)}</th>`).join("");
-  const body = rows.slice(0, 500).map(r =>
-    `<tr>${cols.map(c => {
-      let v = r[c];
-      if (v && typeof v === "object") v = JSON.stringify(v);
-      return `<td>${_escape(v ?? "—")}</td>`;
-    }).join("")}</tr>`).join("");
-  container.innerHTML =
-    `<table class="data-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+
+  const draw = () => {
+    const shown = stateKey ? _applyDrillFilters(stateKey, rows) : rows;
+    const head = cols.map(c => `<th>${_escape(c)}</th>`).join("");
+    const body = shown.slice(0, 500).map(r =>
+      `<tr>${cols.map(c => {
+        let v = r[c];
+        if (v && typeof v === "object") v = JSON.stringify(v);
+        return `<td>${_escape(v ?? "—")}</td>`;
+      }).join("")}</tr>`).join("");
+    let tbl = table.querySelector("tbody");
+    if (tbl) {
+      tbl.innerHTML = body;
+    } else {
+      table.innerHTML =
+        `<table class="data-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    }
+  };
+
+  container.innerHTML = "";
+  const table = document.createElement("div");
+  if (stateKey) renderDrillFilters(container, stateKey, cols, rows, draw);
+  container.appendChild(table);
+  draw();
 }
 
 // Render one tab's section payload into the drill body.
@@ -552,7 +640,7 @@ function _renderDrillSection(body, slug, tabSlug, payload) {
     }
   }
   if (Array.isArray(section)) {
-    renderGenericTable(body, section);
+    renderGenericTable(body, section, `${slug}:drill:${tabSlug}`);
   } else if (section && typeof section === "object" && Object.keys(section).length) {
     renderKeyVals(body, section);
   } else {
