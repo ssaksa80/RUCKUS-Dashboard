@@ -378,3 +378,67 @@ body.dso-mode .topo-ribbon .rib-item b{font-size:2rem}
    (spec §4.3.5). topo-pulse keyframe stays as-is; this sibling rule wins by
    source order over the earlier #4cc9f0 highlight shadow. */
 .topo-node.highlight > circle { filter: drop-shadow(0 0 8px var(--glow-critical)); }
+
+/* ── Tile entrance (pure CSS stagger; no JS list needed) ──────────────── */
+@keyframes tile-enter {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.tile-grid .tile {
+  animation: tile-enter var(--motion-base) var(--ease-out) both;
+}
+.tile-grid .tile:nth-child(1) { animation-delay: 0ms; }
+.tile-grid .tile:nth-child(2) { animation-delay: 40ms; }
+.tile-grid .tile:nth-child(3) { animation-delay: 80ms; }
+.tile-grid .tile:nth-child(4) { animation-delay: 120ms; }
+.tile-grid .tile:nth-child(5) { animation-delay: 160ms; }
+.tile-grid .tile:nth-child(6) { animation-delay: 200ms; }
+.tile-grid .tile:nth-child(n + 7) { animation-delay: 240ms; }
+
+/* ── Live refresh pulse: one-shot ring on the module root per poll ─────── */
+@keyframes refresh-ring {
+  0% { opacity: 0.55; transform: scale(0.995); }
+  100% { opacity: 0; transform: scale(1.01); }
+}
+.module { position: relative; }
+.module-refreshed::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--glow-accent);
+  border-radius: 8px;
+  pointer-events: none;
+  animation: refresh-ring 600ms var(--ease-out) forwards;
+}
+
+/* ── Value-changed flash (non-numeric / formatted KPI updates) ─────────── */
+@keyframes value-flash {
+  0% { color: var(--focus); text-shadow: 0 0 10px var(--glow-accent); }
+  100% { color: inherit; text-shadow: none; }
+}
+.value-changed { animation: value-flash var(--motion-base) var(--ease-out); }
+
+/* ── Warmup sheen while the bar is still filling ──────────────────────── */
+@keyframes warmup-sheen {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(220%); }
+}
+.warmup-fill { position: relative; overflow: hidden; }
+.warmup-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg, transparent, rgba(238, 244, 248, 0.35), transparent);
+  animation: warmup-sheen 1.2s linear infinite;
+}
+.warmup-fill[style*="width: 100%"]::after { animation: none; content: none; }
+
+/* ── DSO wall-mode glow intensify (Q3): larger halo, steadier read ─────── */
+body.dso-mode .kpi-card.critical .kpi-value {
+  text-shadow: 0 0 22px var(--glow-critical);
+}
+body.dso-mode .kpi-card.watch .kpi-value {
+  text-shadow: 0 0 18px var(--glow-watch);
+}
+body.dso-mode .health-chip.danger { box-shadow: 0 0 16px var(--glow-critical); }

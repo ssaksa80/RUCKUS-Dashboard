@@ -61,3 +61,33 @@ def test_topo_pulse_retokened_to_glow_critical():
     assert "@keyframes topo-pulse" in css  # still defined
     # the highlight drop-shadow / pulse now references the critical glow token
     assert "drop-shadow(0 0 8px var(--glow-critical))" in css
+
+
+def test_entrance_and_pulse_keyframes_present():
+    css = _css()
+    for kf in [
+        "@keyframes tile-enter", "@keyframes refresh-ring",
+        "@keyframes value-flash", "@keyframes warmup-sheen",
+    ]:
+        assert kf in css, f"missing keyframe {kf}"
+
+
+def test_trigger_classes_present():
+    css = _css()
+    # one-shot pulse fired by motion.js pulse(root, "refreshed")
+    assert ".module-refreshed::after" in css
+    # value flash for non-numeric/formatted KPI changes
+    assert ".value-changed" in css
+    # staggered tile entrance keyed to nth-child (no JS list)
+    assert ".tile-grid .tile" in css
+    assert "nth-child" in css
+    # warmup sheen only while filling
+    assert '.warmup-fill:not([style*="width: 100%"])::after' in css \
+        or ".warmup-fill::after" in css
+
+
+def test_dso_mode_intensifies_glow():
+    """Q3: wall mode intensifies (larger halo); desk mode subtle."""
+    css = _css()
+    assert "body.dso-mode .kpi-card.critical .kpi-value" in css
+    assert "body.dso-mode .health-chip.danger" in css
