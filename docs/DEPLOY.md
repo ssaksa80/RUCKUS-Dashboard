@@ -161,6 +161,43 @@ The `proxy_buffering off` line is important — without it the warmup SSE
 progress stream is held back by nginx. The dashboard already sends
 `X-Accel-Buffering: no`, which nginx honors, but setting it explicitly is safe.
 
+### 6.1 Production WSGI server (waitress, plain HTTP to nginx)
+
+The default above proxies to Werkzeug's self-signed HTTPS listener. For a
+production reverse-proxy deployment you can instead run the app on the
+`waitress` WSGI server, which serves **plain HTTP** and lets nginx terminate
+TLS (no self-signed cert, no `proxy_ssl_verify off`):
+
+```bash
+pip install -e 'RUCKUS[server]'        # installs waitress
+```
+
+Launch with `--server waitress` (or set `RUCKUS_WSGI_SERVER=waitress`; the
+flag wins). It binds plain HTTP — keep it on loopback:
+
+```bash
+ruckus-dashboard --server waitress --bind 127.0.0.1 --port 8444 --no-browser
+```
+
+Then change only the upstream scheme in the nginx `location /` block above —
+`http`, and drop the self-signed line:
+
+```nginx
+    proxy_pass http://127.0.0.1:8444;
+    # proxy_ssl_verify off;   # not needed — upstream is plain HTTP
+```
+
+Notes:
+- **Single process.** waitress runs one process with a thread pool
+  (`RUCKUS_WSGI_THREADS`, default 4). Do **not** run multiple workers/processes:
+  the connection store and capability registry are in-RAM and process-local, so
+  a second worker would not see the first's session — operators would appear
+  logged out at random. Scale with threads, not processes.
+- **TLS is nginx's job.** waitress has no TLS; never expose its HTTP port
+  directly. The startup banner prints the `http://…` URL as a reminder.
+- The default `--server werkzeug` (self-signed HTTPS) is unchanged and remains
+  the standalone-appliance path.
+
 ## 7. Firewall
 
 ```bash
