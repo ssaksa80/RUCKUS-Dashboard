@@ -654,3 +654,76 @@ def test_render_alert_controller_node_event():
     note = render_alert(events, group_by="site")
     assert "SZ-Node-1" in note.body
     assert "controller" in note.body.lower()
+
+
+# ── state_store ───────────────────────────────────────────────────────────
+
+def test_json_state_store_roundtrip(tmp_instance):
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    from ruckus_dashboard.notify.outage import DeviceStatus
+    store = JsonOutageStateStore(tmp_instance)
+    ds = DeviceStatus(key="ap:aa", type="ap", name="AP-1", group="HQ",
+                      online=False, raw_status="offline", last_change=1000.0)
+    state = {
+        "devices": {"ap:aa": ds},
+        "report": {"last_report_day": "2026-06-30"},
+    }
+    store.save(state)
+    loaded = store.load()
+    assert loaded["devices"]["ap:aa"].online is False
+    assert loaded["devices"]["ap:aa"].name == "AP-1"
+    assert loaded["report"]["last_report_day"] == "2026-06-30"
+
+
+def test_json_state_store_missing_file_returns_empty(tmp_instance):
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    store = JsonOutageStateStore(tmp_instance)
+    result = store.load()
+    assert result["devices"] == {}
+    assert result["report"] == {}
+
+
+def test_json_state_store_corrupt_file_returns_empty(tmp_instance):
+    from pathlib import Path
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    p = Path(tmp_instance) / "notify_state.json"
+    p.write_text("NOT JSON{{{", encoding="utf-8")
+    store = JsonOutageStateStore(tmp_instance)
+    result = store.load()
+    assert result["devices"] == {}
+
+
+def test_json_state_store_atomic_no_tmp_left(tmp_instance):
+    """After save(), .tmp file must not exist."""
+    from pathlib import Path
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    store = JsonOutageStateStore(tmp_instance)
+    store.save({"devices": {}, "report": {}})
+    tmp = Path(tmp_instance) / "notify_state.json.tmp"
+    assert not tmp.exists()
+    main = Path(tmp_instance) / "notify_state.json"
+    assert main.exists()
+
+
+def test_json_state_store_chmod_best_effort_on_windows(tmp_instance):
+    """chmod failure (Windows) must not raise."""
+    from unittest.mock import patch
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    store = JsonOutageStateStore(tmp_instance)
+    with patch("os.chmod", side_effect=OSError("read-only fs")):
+        # Should not raise despite chmod failing.
+        store.save({"devices": {}, "report": {}})
+
+
+def test_json_state_store_pending_fields_roundtrip(tmp_instance):
+    """pending_since and pending_target survive a save/load cycle."""
+    from ruckus_dashboard.notify.state_store import JsonOutageStateStore
+    from ruckus_dashboard.notify.outage import DeviceStatus
+    store = JsonOutageStateStore(tmp_instance)
+    ds = DeviceStatus(key="ap:bb", type="ap", name="AP-2", group="Branch",
+                      online=True, raw_status="online", last_change=900.0,
+                      pending_since=1000.0, pending_target=False)
+    store.save({"devices": {"ap:bb": ds}, "report": {}})
+    loaded = store.load()
+    assert loaded["devices"]["ap:bb"].pending_since == 1000.0
+    assert loaded["devices"]["ap:bb"].pending_target is False
