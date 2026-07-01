@@ -144,6 +144,23 @@ def test_state_from_data_counts():
     assert s["poor_aps"] == []
 
 
+def test_state_from_data_zero_alarm_count_is_zero():
+    """Bug #14: 'count or 1' treated a zero/missing count as 1.  Must be 0."""
+    from ruckus_dashboard.notify.scheduler import state_from_data
+    data = {
+        "aps": [],
+        "switches": [],
+        "alarms": [
+            {"severity": "critical", "count": 0},   # explicit zero
+            {"severity": "critical"},               # missing count
+        ],
+    }
+    s = state_from_data(data)
+    assert s["critical_alarms"] == 0, (
+        "count=0 and missing count must both contribute 0, not 1"
+    )
+
+
 def test_poor_quality_aps_threshold():
     from ruckus_dashboard.notify.scheduler import poor_quality_aps
     clients = ([{"ap": "AP-BAD", "quality": "poor"}] * 4 +

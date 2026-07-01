@@ -46,7 +46,7 @@ def state_from_data(data: dict[str, Any]) -> dict[str, Any]:
         "switches_offline": sum(
             1 for s in data.get("switches") or []
             if str(s.get("status")).lower() not in ("online", "in_service")),
-        "critical_alarms": sum(int(a.get("count") or 1)
+        "critical_alarms": sum(int(a.get("count") or 0)
                                for a in data.get("alarms") or []
                                if a.get("severity") == "critical"),
         "poor_aps": poor_quality_aps(data.get("clients") or []),
