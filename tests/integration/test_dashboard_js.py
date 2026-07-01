@@ -141,3 +141,16 @@ def test_dashboard_js_render_filters_per_column_controls_and_clear():
         # build-once staleness gate must be gone (options rebuild each render)
         assert "host.dataset.built === slug" not in body, \
             "renderFilters must not short-circuit on dataset.built"
+
+
+def test_dashboard_js_kpi_and_poor_ap_reflect_into_selects():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        # KPI scalar filters still write unprefixed keys and reflect into SELECTs.
+        assert 'data-filter-key="ap"' in body          # poor-AP reflect selector
+        assert "applyKpiFilter" in body
+        assert "ctrl.tagName === \"SELECT\"" in body
+        # Single-select reflect must not assume multi-select.
+        assert "band_5" in body and "poor_signal" in body
