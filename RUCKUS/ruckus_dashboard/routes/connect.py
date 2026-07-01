@@ -86,6 +86,11 @@ def connect():
 
     if getattr(current_app, "notify_scheduler", None) is not None:
         current_app.notify_scheduler.set_connection(connection)
+        # The daily scheduled report runs without a request/session, so seed its
+        # ops here (mirrors the per-request capability gate) or gated modules
+        # render disabled in the unattended run.
+        current_app.notify_scheduler.set_available_ops(
+            current_app.capability_registry.get_for([new_id]))
 
     return redirect(url_for("pages.index"))
 

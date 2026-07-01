@@ -140,7 +140,11 @@ def _authed_with_conn(tmp_path):
                             api_version="v11_0", verify_tls=False,
                             token_expires_at=9999999999)
     cid = app.connection_store.put(conn)
-    app.available_ops = {("POST", "/query/client"), ("POST", "/query/ap")}
+    # Production path: capability ops live in the per-connection registry keyed
+    # by the session's connection id — NOT a process-global ``app.available_ops``
+    # (that attribute was removed in SP7; the report routes read the registry).
+    app.capability_registry.set_for(
+        cid, {("POST", "/query/client"), ("POST", "/query/ap")})
     with app.test_client() as c:
         c.get("/")
         with c.session_transaction() as s:
@@ -224,10 +228,49 @@ def test_reports_tab_happy_path_emails_one_module(tmp_path, monkeypatch):
         modmod.MODULES["clients"] = original
 
 
+def test_reports_tab_gated_module_granted_via_registry_not_422(tmp_path, monkeypatch):
+    """Production-path guard: the capability gate on ``/api/reports/tab`` reads
+    the per-connection ``capability_registry`` (seeded for the session's cid),
+    NOT the removed process-global ``app.available_ops``.
+
+    'clients' requires ("POST","/query/client"), which the fixture grants in the
+    registry. Before the SP7 wiring fix the route read ``getattr(app,
+    "available_ops", set())`` — always empty in production — and returned 422
+    even though the tab renders in the UI. After the fix the gate is satisfied
+    and the request proceeds (email send is stubbed so we assert the 200/sent).
+    """
+    import ruckus_dashboard.routes.notifications as notif_routes
+    import ruckus_dashboard.modules as modmod
+    import dataclasses
+
+    monkeypatch.setattr(notif_routes, "send_email",
+                        lambda *a, **kw: None)
+
+    gen = _authed_with_conn(tmp_path)
+    c, csrf = next(gen)
+    c.post("/api/notifications/config",
+           json={"smtp": {"host": "mail.x"}, "report": {"recipients": ["noc@x"]}},
+           headers={"X-CSRF-Token": csrf})
+    original = modmod.MODULES["clients"]
+    modmod.MODULES["clients"] = dataclasses.replace(
+        original, fetcher=lambda ctx: {"items": [{"id": "a"}]}, drill_fetcher=None)
+    try:
+        r = c.post("/api/reports/tab", json={"slug": "clients"},
+                   headers={"X-CSRF-Token": csrf})
+        # The load-bearing assertion: the capability gate did NOT reject a module
+        # the connection actually has (this is exactly the 422 the operator saw).
+        assert r.status_code != 422, r.get_data(as_text=True)
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.get_json()["sent"] is True
+    finally:
+        modmod.MODULES["clients"] = original
+
+
 def test_reports_tab_disabled_module_returns_422(tmp_path):
     gen = _authed_with_conn(tmp_path)
     c, csrf = next(gen)
-    # 'rogues' requires ("POST","/query/roguesInfoList"), not in available_ops.
+    # 'rogues' requires ("POST","/query/roguesInfoList"), which the fixture does
+    # NOT grant in the registry — a module whose caps are not granted still 422s.
     r = c.post("/api/reports/tab", json={"slug": "rogues"},
                headers={"X-CSRF-Token": csrf})
     assert r.status_code == 422

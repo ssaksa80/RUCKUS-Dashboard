@@ -102,7 +102,8 @@ def email_report_now():
     try:
         model = collect_report_model(
             conn, dict(current_app.config),
-            available_ops=getattr(current_app, "available_ops", set()))
+            available_ops=current_app.capability_registry.get_for(
+            session.get("connection_ids", [])))
         xlsx = build_report(model)
         ts = time.strftime("%Y-%m-%d", time.gmtime())
         send_email(cfg, smtp_password(cfg, current_app.secrets_manager),
@@ -129,7 +130,8 @@ def generate_report():
         return jsonify({"error": "Connection expired.", "reauth": True}), 401
     model = collect_report_model(
         conn, dict(current_app.config),
-        available_ops=getattr(current_app, "available_ops", set()))
+        available_ops=current_app.capability_registry.get_for(
+            session.get("connection_ids", [])))
     xlsx = build_report(model)
     ts = time.strftime("%Y%m%d-%H%M", time.gmtime())
     return send_file(io.BytesIO(xlsx),
@@ -190,7 +192,8 @@ def email_report_tab():
     if conn is None:
         return jsonify({"error": "Connection expired.", "reauth": True}), 401
 
-    gate = CapabilityGate(available=getattr(current_app, "available_ops", set()))
+    gate = CapabilityGate(available=current_app.capability_registry.get_for(
+        session.get("connection_ids", [])))
     if not gate.satisfied(spec.requires_capabilities):
         return jsonify({"sent": False,
                         "error": "module unavailable on this controller"}), 422
@@ -207,7 +210,8 @@ def email_report_tab():
     try:
         model = collect_report_model(
             conn, dict(current_app.config),
-            available_ops=getattr(current_app, "available_ops", set()),
+            available_ops=current_app.capability_registry.get_for(
+                session.get("connection_ids", [])),
             slugs=(slug,), filters_by_slug={slug: filters})
         xlsx = build_report(model)
         ts = time.strftime("%Y%m%d-%H%M", time.gmtime())
