@@ -494,3 +494,79 @@ def test_reconcile_offline_threshold_fires_when_met():
     events, _ = OutageEngine.reconcile(prev, snap, cfg, now=8000.0)
     offline_events = [e for e in events if e.kind == "offline"]
     assert len(offline_events) == 2
+
+
+# ── outage: debounce ──────────────────────────────────────────────────────
+
+def test_reconcile_debounce_holds_on_first_tick():
+    """Offline device within debounce window: no event on first tick."""
+    from ruckus_dashboard.notify.outage import OutageEngine
+    prev = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", False, "offline")])
+    cfg = {"debounce_seconds": 120, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(prev, snap, cfg, now=1000.0)
+    assert events == []
+    # pending_since recorded
+    assert new_devices["ap:aa"].pending_since == 1000.0
+    assert new_devices["ap:aa"].pending_target is False
+    # committed state unchanged
+    assert new_devices["ap:aa"].online is True
+
+
+def test_reconcile_debounce_fires_after_window():
+    """Same device still offline after debounce_seconds → event emitted."""
+    from ruckus_dashboard.notify.outage import OutageEngine, DeviceStatus
+    # Simulate prev_devices as the state AFTER the first tick (pending set).
+    prev_ds = DeviceStatus(
+        key="ap:aa", type="ap", name="AP-1", group="HQ",
+        online=True, raw_status="online", last_change=900.0,
+        pending_since=1000.0, pending_target=False,
+    )
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", False, "offline")])
+    cfg = {"debounce_seconds": 120, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(
+        {"ap:aa": prev_ds}, snap, cfg, now=1121.0  # 121 s later, past window
+    )
+    assert len(events) == 1
+    assert events[0].kind == "offline"
+    assert new_devices["ap:aa"].online is False
+    assert new_devices["ap:aa"].pending_since is None
+
+
+def test_reconcile_debounce_not_yet_matured():
+    """Still within the window (119 s): pending kept, no event."""
+    from ruckus_dashboard.notify.outage import OutageEngine, DeviceStatus
+    prev_ds = DeviceStatus(
+        key="ap:aa", type="ap", name="AP-1", group="HQ",
+        online=True, raw_status="online", last_change=900.0,
+        pending_since=1000.0, pending_target=False,
+    )
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", False, "offline")])
+    cfg = {"debounce_seconds": 120, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(
+        {"ap:aa": prev_ds}, snap, cfg, now=1119.0
+    )
+    assert events == []
+    assert new_devices["ap:aa"].pending_since == 1000.0
+    assert new_devices["ap:aa"].online is True
+
+
+def test_reconcile_flap_within_debounce_suppressed():
+    """Device goes offline then recovers within the debounce window — no event."""
+    from ruckus_dashboard.notify.outage import OutageEngine, DeviceStatus
+    # After tick 1: pending toward False (offline)
+    prev_ds = DeviceStatus(
+        key="ap:aa", type="ap", name="AP-1", group="HQ",
+        online=True, raw_status="online", last_change=900.0,
+        pending_since=1000.0, pending_target=False,
+    )
+    # Tick 2: device is back online within the 120 s window.
+    snap = _make_snapshot([("ap:aa", "ap", "AP-1", "HQ", True, "online")])
+    cfg = {"debounce_seconds": 120, "recovery": True, "offline_threshold": 1}
+    events, new_devices = OutageEngine.reconcile(
+        {"ap:aa": prev_ds}, snap, cfg, now=1060.0
+    )
+    assert events == []
+    # Pending cleared; stable online.
+    assert new_devices["ap:aa"].pending_since is None
+    assert new_devices["ap:aa"].online is True
