@@ -48,6 +48,16 @@ def build_config(instance_path: str) -> dict:
         "SESSION_COOKIE_HTTPONLY": True,
         "SESSION_COOKIE_SECURE": True,
         "SESSION_COOKIE_SAMESITE": "Strict",
+        # ─── Phase B identity/RBAC (PB1) ─────────────────────────
+        # Empty -> resolved to sqlite:///<instance>/ruckus.db by db.init_db.
+        "RUCKUS_DATABASE_URL": os.getenv("RUCKUS_DATABASE_URL", ""),
+        # Break-glass admin seed password (first boot only). If empty, a random
+        # one is generated and logged once by bootstrap_admin.
+        "RUCKUS_ADMIN_PASSWORD": os.getenv("RUCKUS_ADMIN_PASSWORD", ""),
+        # App-user login gate. Default ON (enforce app-login). A single-operator
+        # site can set RUCKUS_AUTH_REQUIRED=0 to preserve pre-PhaseB behavior;
+        # the test app factory also defaults it OFF (see create_app).
+        "RUCKUS_AUTH_REQUIRED": _bool_env("RUCKUS_AUTH_REQUIRED", True),
         # ─── NEW UI shell ────────────────────────────────────────
         "RUCKUS_ENABLE_NEW_UI": _bool_env("RUCKUS_ENABLE_NEW_UI", False),
         "RUCKUS_MAX_INFLIGHT_PER_MODULE": _int_env("RUCKUS_MAX_INFLIGHT_PER_MODULE", 1),

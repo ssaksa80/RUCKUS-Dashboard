@@ -14,6 +14,11 @@ dependencies = [
   "cryptography>=42",
   "python-dotenv>=1.0",
   "openpyxl>=3.1",
+  # Phase B (identity / RBAC / multi-tenancy), single-node SQLite. SQLAlchemy
+  # 2.x ORM; PB1 creates schema via Base.metadata.create_all (Alembic/Authlib
+  # land in later slices). Passwords are argon2id via passlib.
+  "sqlalchemy>=2",
+  "passlib[argon2]>=1.7",
 ]
 
 [project.scripts]
