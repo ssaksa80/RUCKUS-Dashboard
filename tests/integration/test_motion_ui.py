@@ -186,3 +186,13 @@ def test_dashboard_js_health_bar_counts_up():
         # the health-value count-up must be inside applyHealthState
         fn = body.split("function applyHealthState", 1)[1].split("function renderHealthBar", 1)[0]
         assert "animateCount" in fn, "applyHealthState must count up the chip value"
+
+
+def test_dashboard_js_tile_counts_up_and_pulses():
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        # the count-up + pulse must live inside updateTile (the SSE tile updater)
+        fn = body.split("const updateTile", 1)[1].split("const finish", 1)[0]
+        assert "animateCount" in fn, "updateTile must count up the resolved value"
+        assert "pulse(tile" in fn or "m.pulse(tile" in fn, "tile must pulse on resolve"

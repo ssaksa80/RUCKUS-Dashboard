@@ -896,7 +896,12 @@ function startWarmupStream() {
     if (payload.status === "done") {
       const s = payload.summary || {};
       const pick = s.total ?? s.count ?? s.switches ?? Object.values(s).find(x => typeof x === "number");
-      val.textContent = pick === undefined ? "0" : formatKpiValue(pick);
+      const num = Number(pick);
+      if (pick !== undefined && typeof pick !== "object" && isFinite(num)) {
+        _motion(m => m.animateCount(val, num, { fmt: String, duration: 320 }));
+      } else {
+        val.textContent = pick === undefined ? "0" : formatKpiValue(pick);
+      }
     } else if (payload.status === "failed" || payload.status === "timed_out") {
       val.textContent = "!";
       val.title = payload.error_message || "";
@@ -909,6 +914,7 @@ function startWarmupStream() {
     done += 1;
     if (bar) bar.style.width = `${Math.round(100 * done / total)}%`;
     if (text) text.textContent = `Discovering RUCKUS controller… ${done}/${total}`;
+    _motion(m => m.pulse(tile, "refreshed"));
   };
 
   const finish = () => { strip.hidden = true; };
