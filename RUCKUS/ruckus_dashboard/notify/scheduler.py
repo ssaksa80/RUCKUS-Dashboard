@@ -162,6 +162,7 @@ class NotifyScheduler:
         self._app_config = app_config
         self._secrets = secrets
         self._connection = None
+        self._available_ops: set = set()
         self._lock = threading.Lock()
         self._last_alert_check = 0.0
         self._stop = threading.Event()
@@ -183,6 +184,10 @@ class NotifyScheduler:
             self._connection = connection
         # SP2: do NOT null committed state — the store is the source of truth.
         # A reconnect must not re-baseline (audit #4 fix).
+
+    def set_available_ops(self, ops) -> None:
+        with self._lock:
+            self._available_ops = set(ops or set())
 
     def clear_connection(self) -> None:
         with self._lock:
@@ -244,8 +249,11 @@ class NotifyScheduler:
             self._mark_report_sent(day)
             try:
                 from ..reports.excel import build_report
-                data = collect_report_data(connection, self._app_config)
-                xlsx = build_report(data)
+                from ..reports.collect import collect_report_model
+                model = collect_report_model(
+                    connection, self._app_config,
+                    available_ops=set(getattr(self, "_available_ops", set())))
+                xlsx = build_report(model)
                 ts = time.strftime("%Y-%m-%d", time.localtime(now))
                 send_email(cfg, smtp_password(cfg, self._secrets),
                            cfg["report"]["recipients"],

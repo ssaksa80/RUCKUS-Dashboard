@@ -100,10 +100,10 @@ def email_report_now():
         return jsonify({"error": "Connection expired.", "reauth": True}), 401
     cfg = load_config(current_app.instance_path)
     try:
-        from ..notify.scheduler import collect_report_data
-        from ..reports.excel import build_report
-        data = collect_report_data(conn, dict(current_app.config))
-        xlsx = build_report(data)
+        model = collect_report_model(
+            conn, dict(current_app.config),
+            available_ops=getattr(current_app, "available_ops", set()))
+        xlsx = build_report(model)
         ts = time.strftime("%Y-%m-%d", time.gmtime())
         send_email(cfg, smtp_password(cfg, current_app.secrets_manager),
                    cfg["report"]["recipients"],
@@ -127,10 +127,10 @@ def generate_report():
             break
     if conn is None:
         return jsonify({"error": "Connection expired.", "reauth": True}), 401
-    from ..notify.scheduler import collect_report_data
-    from ..reports.excel import build_report
-    data = collect_report_data(conn, dict(current_app.config))
-    xlsx = build_report(data)
+    model = collect_report_model(
+        conn, dict(current_app.config),
+        available_ops=getattr(current_app, "available_ops", set()))
+    xlsx = build_report(model)
     ts = time.strftime("%Y%m%d-%H%M", time.gmtime())
     return send_file(io.BytesIO(xlsx),
                      mimetype=("application/vnd.openxmlformats-officedocument"

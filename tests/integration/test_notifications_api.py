@@ -232,3 +232,45 @@ def test_reports_tab_disabled_module_returns_422(tmp_path):
                headers={"X-CSRF-Token": csrf})
     assert r.status_code == 422
     assert r.get_json()["sent"] is False
+
+
+def test_reports_generate_covers_all_modules_no_crash(tmp_path, monkeypatch):
+    """/api/reports/generate runs the 19-module collector; topology/overview
+    shapes must not crash the workbook (regression for the 4-module blind spot)."""
+    import io
+    import openpyxl
+    import ruckus_dashboard.modules as modmod
+    import dataclasses
+
+    gen = _authed_with_conn(tmp_path)
+    c, _csrf = next(gen)
+    # Make every module enabled + cheap; keep topology/overview real shapes.
+    originals = dict(modmod.MODULES)
+    try:
+        for slug, spec in list(modmod.MODULES.items()):
+            if slug in ("topology", "overview"):
+                modmod.MODULES[slug] = dataclasses.replace(
+                    spec, requires_capabilities=())
+                continue
+            modmod.MODULES[slug] = dataclasses.replace(
+                spec,
+                fetcher=lambda ctx, s=slug: {"items": [{"id": f"{s}-1"}],
+                                             "raw_count": 1},
+                drill_fetcher=None, requires_capabilities=())
+        # topology fetcher returns its graph shape; stub to avoid HTTP.
+        modmod.MODULES["topology"] = dataclasses.replace(
+            modmod.MODULES["topology"],
+            fetcher=lambda ctx: {"nodes": [{"id": "controller"}], "edges": [],
+                                 "items": []})
+        r = c.get("/api/reports/generate")
+        assert r.status_code == 200
+        wb = openpyxl.load_workbook(io.BytesIO(r.data))
+        assert "Coverage" in wb.sheetnames
+        # Every module title shows up on the Coverage sheet.
+        cov = "\n".join(str(cell.value) for row in wb["Coverage"].iter_rows()
+                        for cell in row if cell.value is not None)
+        for spec in modmod.all_modules():
+            assert spec.title in cov, f"{spec.slug} missing from coverage"
+    finally:
+        modmod.MODULES.clear()
+        modmod.MODULES.update(originals)
