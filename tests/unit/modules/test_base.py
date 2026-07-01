@@ -246,3 +246,14 @@ def test_module_spec_resolved_filters_honor_explicit_override():
         filters=(),
     )
     assert spec.resolved_filters[0].server_filter == "ZONE_ID"
+
+
+def test_module_spec_accepts_flow_view():
+    spec = ModuleSpec(
+        slug="x", title="X", group="Cross-cutting", icon="?",
+        poll_seconds=30, fetcher=noop_fetcher, drill_fetcher=None,
+        drill_tabs=(), summary_fn=noop_summary,
+        requires_platforms=("smartzone",), requires_capabilities=(),
+        supports_views=("graph", "flow"),
+    )
+    assert "flow" in spec.supports_views
