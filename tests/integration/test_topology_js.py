@@ -84,3 +84,9 @@ def test_topology_template_has_view_toggle():
     assert "data-topo-view" in html
     assert 'data-view="graph"' in html
     assert 'data-view="flow"' in html
+
+
+def test_topology_js_has_set_view_and_flow_dispatch():
+    js = pathlib.Path("RUCKUS/ruckus_dashboard/static/topology.js").read_text(encoding="utf-8")
+    for sym in ["setView", "renderFlow", 'topoState.view', "data-topo-view"]:
+        assert sym in js, f"missing {sym}"

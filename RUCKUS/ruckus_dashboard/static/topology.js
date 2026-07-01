@@ -317,6 +317,14 @@ function rerenderFromState() {
   });
 }
 
+function setView(root, view) {
+  topoState.view = view === "flow" ? "flow" : "graph";
+  const toggle = root.querySelector("[data-topo-view]");
+  if (toggle) toggle.querySelectorAll("button").forEach(b =>
+    b.classList.toggle("active", b.getAttribute("data-view") === topoState.view));
+  rerenderFromState();
+}
+
 function nodeHref(n) {
   if (n.type === "switch") return `/m/switches/${encodeURIComponent(n.id)}`;
   if (n.type === "controller") return "/m/controller";
@@ -437,6 +445,12 @@ function renderTopology(root, payload) {
   if (topoState.problemsOnly) vis = filterProblemsOnly(vis.nodes, vis.edges);
   if (!vis.nodes.length) { canvas.innerHTML = `<p class="empty">No problems — all healthy.</p>`; updateStatusRibbon(root, nodes); return; }
   topoState.visEdges = vis.edges;
+  if (topoState.view === "flow") {
+    canvas.innerHTML = renderFlow({ nodes: vis.nodes, edges: vis.edges }, topoState.rates);
+    _wireTopo(root, canvas.querySelector("svg"));
+    _renderTopoLegend(root, data.legend);
+    return;
+  }
   topoState.positions = layoutGraph(vis.nodes, vis.edges, topoState.saved, topoState.pinned);
   const pos = topoState.positions;
 
@@ -768,6 +782,10 @@ function wireToolbar(root) {
     rerenderFromState();
   });
 
+  const viewToggle = root.querySelector("[data-topo-view]");
+  if (viewToggle) viewToggle.querySelectorAll("button").forEach(b =>
+    b.addEventListener("click", () => setView(root, b.getAttribute("data-view"))));
+
   const exportBtn = root.querySelector("[data-topo-export]");
   if (exportBtn) exportBtn.addEventListener("click", () => {
     try {
@@ -829,6 +847,6 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
 // sync with the pure functions exercised by tests/integration/test_topology_node.py.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly, layoutLayered, flowWidth, renderFlow,
+    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly, layoutLayered, flowWidth, renderFlow, setView,
   };
 }

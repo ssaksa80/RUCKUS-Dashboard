@@ -118,3 +118,8 @@ def test_expanded_ap_nodes_carry_avg_signal():
     ap = next(n for n in g["nodes"] if n["type"] == "ap")
     assert ap["meta"]["rssi_avg"] == -62
     assert "(-62 dB)" in ap["label"]
+
+
+def test_topology_advertises_graph_and_flow_views():
+    from ruckus_dashboard.modules import MODULES
+    assert MODULES["topology"].supports_views == ("graph", "flow")

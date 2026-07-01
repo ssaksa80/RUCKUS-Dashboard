@@ -248,5 +248,5 @@ register(ModuleSpec(
     poll_seconds=POLL_SECONDS, fetcher=fetch, drill_fetcher=None, drill_tabs=(),
     summary_fn=summary, requires_platforms=("smartzone",),
     requires_capabilities=(("GET", "/cluster/state"),),
-    supports_views=("graph",), warmup=True, merge=merge,
+    supports_views=("graph", "flow"), warmup=True, merge=merge,
 ))
