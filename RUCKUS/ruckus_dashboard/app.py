@@ -31,7 +31,18 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     configure_logging(app.instance_path, bool(app.config.get("RUCKUS_SHOW_DEBUG")))
 
-    app.connection_store = ConnectionStore(ttl_seconds=app.config["CREDENTIAL_TTL_SECONDS"])
+    # Capability discovery populates this per-connection on connect; modules
+    # consult it via CapabilityGate keyed by the session's connection ids. A
+    # registry (not a process-global set) so concurrent operators on different
+    # controllers don't leak ops into — or wipe gating from — each other.
+    # Created before the connection store so TTL-eviction can clear the matching
+    # capability entry (on_evict) instead of leaking it.
+    from .infra.capability_registry import CapabilityRegistry
+    app.capability_registry = CapabilityRegistry()
+    app.connection_store = ConnectionStore(
+        ttl_seconds=app.config["CREDENTIAL_TTL_SECONDS"],
+        on_evict=app.capability_registry.clear,
+    )
     app.secrets_manager = SecretsManager(app.instance_path)
     app.profile_store = ProfileStore(app.instance_path, app.secrets_manager)
     app.config["RUCKUS_HOST_ALLOWLIST"] = HostAllowList(app.config.get("RUCKUS_ALLOWED_HOSTS", ""))
@@ -44,12 +55,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                                            app.secrets_manager)
     app.notify_scheduler.start()
     app.inflight = InFlightDeduper()
-    # Capability discovery populates this per-connection on connect; modules
-    # consult it via CapabilityGate keyed by the session's connection ids. A
-    # registry (not a process-global set) so concurrent operators on different
-    # controllers don't leak ops into — or wipe gating from — each other.
-    from .infra.capability_registry import CapabilityRegistry
-    app.capability_registry = CapabilityRegistry()
 
     from .routes.modules import bp as modules_bp
     app.register_blueprint(modules_bp)
