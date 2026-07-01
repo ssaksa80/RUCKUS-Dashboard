@@ -205,3 +205,31 @@ def test_base_html_loads_motion_before_dashboard():
     # ordering: motion.js must appear before dashboard.js so RuckusMotion is defined
     assert html.index("motion.js") < html.index("dashboard.js"), \
         "motion.js must be loaded before dashboard.js"
+
+
+def test_csp_script_src_is_strictly_self():
+    """SP5 invariant: motion ships as same-origin files only. script-src must
+    stay exactly 'self' — no 'unsafe-inline', no CDN host — so inline/3rd-party
+    scripts can never be introduced silently."""
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        csp = c.get("/healthz").headers["Content-Security-Policy"]
+        assert "script-src 'self'" in csp
+        # the script directive must NOT permit inline or remote
+        script_dir = [p.strip() for p in csp.split(";") if p.strip().startswith("script-src")][0]
+        assert "unsafe-inline" not in script_dir
+        assert "http://" not in script_dir and "https://" not in script_dir
+        # the rest of the policy is intact (defense-in-depth unchanged)
+        assert "default-src 'self'" in csp
+        assert "object-src" not in csp or "object-src 'none'" in csp
+
+
+def test_motion_js_is_same_origin_only_no_inline_script_in_templates():
+    """No inline <script>…</script> body anywhere (only src= tags allowed)."""
+    import re
+    root = pathlib.Path("RUCKUS/ruckus_dashboard/templates")
+    for tpl in root.rglob("*.html"):
+        text = tpl.read_text(encoding="utf-8")
+        for m in re.finditer(r"<script\b([^>]*)>", text):
+            attrs = m.group(1)
+            assert "src=" in attrs, f"inline <script> body in {tpl.name} violates CSP"
