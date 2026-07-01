@@ -115,3 +115,27 @@ def project_columns(rows: list[dict],
                 projected[k] = row[k]
         out.append(projected)
     return out
+
+
+def _rows_from_payload(payload: dict,
+                       *, raw_n: int) -> tuple[list[dict], int, list[dict], str | None]:
+    """Adapt a fetcher payload to ``(rows, row_total, raw_samples, note)``.
+
+    Handles the real variants:
+      * topology graph ``{"nodes":[...], "edges":[...], "items":[]}`` -> node rows
+      * overview ``{"items":[], "_overview":True}`` -> empty + note
+      * ``{"items":[...], "raw_count":N, "raw_rows":[...]}`` -> items
+      * ``{"items":[...]}`` -> items, total = len(items)
+    """
+    payload = payload or {}
+    if payload.get("nodes") is not None and "items" in payload:
+        nodes = list(payload.get("nodes") or [])
+        return nodes, len(nodes), nodes[:raw_n], "graph module — node list"
+    if payload.get("_overview"):
+        return [], 0, [], "overview tiles (warmup-driven), no list"
+    items = list(payload.get("items") or [])
+    raw_count = payload.get("raw_count")
+    total = int(raw_count) if raw_count is not None else len(items)
+    raw_rows = payload.get("raw_rows")
+    raw = list(raw_rows) if raw_rows else items[:raw_n]
+    return items, total, raw, None

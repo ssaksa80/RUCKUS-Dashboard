@@ -54,3 +54,42 @@ def test_project_columns_passthrough_when_no_columns():
     rows = [{"id": "x", "a": 1, "b": 2}]
     # No columns declared (e.g. topology) → rows pass through unchanged.
     assert project_columns(rows, []) == rows
+
+
+def test_rows_from_payload_items_with_raw_count_and_raw_rows():
+    from ruckus_dashboard.reports.collect import _rows_from_payload
+    payload = {"items": [{"id": 1}, {"id": 2}], "raw_count": 99,
+               "raw_rows": [{"clientMac": "AA"}]}
+    rows, total, raw, note = _rows_from_payload(payload, raw_n=2)
+    assert rows == [{"id": 1}, {"id": 2}]
+    assert total == 99                       # raw_count wins over len(items)
+    assert raw == [{"clientMac": "AA"}]      # raw_rows used verbatim
+    assert note is None
+
+
+def test_rows_from_payload_items_without_raw_rows_samples_items():
+    from ruckus_dashboard.reports.collect import _rows_from_payload
+    payload = {"items": [{"id": 1}, {"id": 2}, {"id": 3}]}
+    rows, total, raw, note = _rows_from_payload(payload, raw_n=2)
+    assert total == 3                        # falls back to len(items)
+    assert raw == [{"id": 1}, {"id": 2}]     # first raw_n items
+
+
+def test_rows_from_payload_overview_is_empty_with_note():
+    from ruckus_dashboard.reports.collect import _rows_from_payload
+    rows, total, raw, note = _rows_from_payload({"items": [], "_overview": True},
+                                                raw_n=2)
+    assert rows == [] and total == 0 and raw == []
+    assert note and "overview" in note.lower()
+
+
+def test_rows_from_payload_topology_uses_nodes():
+    from ruckus_dashboard.reports.collect import _rows_from_payload
+    payload = {"nodes": [{"id": "controller"}, {"id": "z1"}],
+               "edges": [{"source": "controller", "target": "z1"}],
+               "items": []}
+    rows, total, raw, note = _rows_from_payload(payload, raw_n=1)
+    assert rows == [{"id": "controller"}, {"id": "z1"}]
+    assert total == 2
+    assert raw == [{"id": "controller"}]     # first raw_n nodes
+    assert note and "graph" in note.lower()
