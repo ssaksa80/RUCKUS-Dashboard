@@ -15,10 +15,13 @@ dependencies = [
   "python-dotenv>=1.0",
   "openpyxl>=3.1",
   # Phase B (identity / RBAC / multi-tenancy), single-node SQLite. SQLAlchemy
-  # 2.x ORM; PB1 creates schema via Base.metadata.create_all (Alembic/Authlib
-  # land in later slices). Passwords are argon2id via passlib.
+  # 2.x ORM; PB1 creates schema via Base.metadata.create_all (Alembic lands in
+  # a later slice). Passwords are argon2id via passlib. Authlib (PB2) drives the
+  # OIDC SSO flow against an on-prem/air-gapped IdP; all pure-Python wheels,
+  # installable from a local wheelhouse.
   "sqlalchemy>=2",
   "passlib[argon2]>=1.7",
+  "authlib>=1.3",
 ]
 
 [project.scripts]
