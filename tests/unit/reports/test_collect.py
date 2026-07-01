@@ -1,5 +1,30 @@
 """Unit tests for the generic report collector (reports/collect.py)."""
+from ruckus_dashboard.clients.base import RuckusClientError
+from ruckus_dashboard.infra.capability_gate import CapabilityGate
+from ruckus_dashboard.modules._base import (
+    Column, FetcherContext, ModuleSpec, TabSpec,
+)
 from ruckus_dashboard.reports.collect import apply_filter
+
+
+def _spec(**over):
+    """A minimal valid ModuleSpec; override fields per test."""
+    base = dict(
+        slug="demo", title="Demo", group="Wireless", icon="x",
+        poll_seconds=10, fetcher=lambda ctx: {"items": []},
+        drill_fetcher=None, drill_tabs=(), summary_fn=lambda d: {},
+        requires_platforms=("smartzone",), requires_capabilities=(),
+        supports_views=("table",), columns=(Column("Host", "hostname"),),
+        filters=(),
+    )
+    base.update(over)
+    return ModuleSpec(**base)
+
+
+def _ctx(config=None):
+    return FetcherContext(connection=object(), config=config or {},
+                          filters=None, capability_gate=CapabilityGate(set()),
+                          connection_label="SZ-LAB")
 
 
 def test_apply_filter_exact_match_per_key():
@@ -93,3 +118,104 @@ def test_rows_from_payload_topology_uses_nodes():
     assert total == 2
     assert raw == [{"id": "controller"}]     # first raw_n nodes
     assert note and "graph" in note.lower()
+
+
+def test_collect_module_ok_projects_rows_and_summary():
+    from ruckus_dashboard.reports.collect import _collect_module
+    spec = _spec(
+        fetcher=lambda ctx: {"items": [{"id": "a", "hostname": "h1", "x": 9}],
+                             "raw_count": 1, "raw_rows": [{"clientMac": "a"}]},
+        summary_fn=lambda d: {"total": len(d.get("items", []))},
+    )
+    rep = _collect_module(spec, _ctx(), gate=CapabilityGate(set()),
+                          filters={}, drill_n=3, raw_n=2)
+    assert rep.status == "ok"
+    assert rep.summary == {"total": 1}
+    assert rep.rows == [{"id": "a", "hostname": "h1"}]   # projected
+    assert rep.row_total == 1
+    assert rep.raw_samples == [{"clientMac": "a"}]
+    assert rep.columns and rep.columns[0].key == "hostname"
+
+
+def test_collect_module_disabled_when_gate_unsatisfied_and_not_fetched():
+    from ruckus_dashboard.reports.collect import _collect_module
+    called = {"n": 0}
+
+    def fetcher(ctx):
+        called["n"] += 1
+        return {"items": []}
+
+    spec = _spec(fetcher=fetcher,
+                 requires_capabilities=(("POST", "/query/ap"),))
+    rep = _collect_module(spec, _ctx(), gate=CapabilityGate(set()),
+                          filters={}, drill_n=3, raw_n=2)
+    assert rep.status == "disabled"
+    assert called["n"] == 0                  # fetcher never ran
+    assert rep.note and "unavailable" in rep.note.lower()
+
+
+def test_collect_module_error_is_contained():
+    from ruckus_dashboard.reports.collect import _collect_module
+
+    def boom(ctx):
+        raise RuckusClientError("bad", 502, {"raw": "secret detail"})
+
+    spec = _spec(fetcher=boom)
+    rep = _collect_module(spec, _ctx({"RUCKUS_SHOW_DEBUG": False}),
+                          gate=CapabilityGate(set()), filters={},
+                          drill_n=3, raw_n=2)
+    assert rep.status == "error"
+    assert rep.errors and rep.errors[0]["status"] == 502
+    # Debug off → raw upstream body is NOT exposed in the error message.
+    assert "secret detail" not in rep.errors[0]["message"]
+
+
+def test_collect_module_error_exposes_raw_when_debug_on():
+    from ruckus_dashboard.reports.collect import _collect_module
+
+    def boom(ctx):
+        raise RuckusClientError("bad", 400, {"raw": "validation: nope"})
+
+    spec = _spec(fetcher=boom)
+    rep = _collect_module(spec, _ctx({"RUCKUS_SHOW_DEBUG": True}),
+                          gate=CapabilityGate(set()), filters={},
+                          drill_n=3, raw_n=2)
+    assert "validation: nope" in rep.errors[0]["message"]
+
+
+def test_collect_module_applies_filters_before_projection():
+    from ruckus_dashboard.reports.collect import _collect_module
+    spec = _spec(
+        fetcher=lambda ctx: {"items": [
+            {"id": "a", "hostname": "h1", "band": "5 GHz"},
+            {"id": "b", "hostname": "h2", "band": "2.4 GHz"}]},
+        columns=(Column("Host", "hostname"), Column("Band", "band")),
+    )
+    rep = _collect_module(spec, _ctx(), gate=CapabilityGate(set()),
+                          filters={"band": "5 GHz"}, drill_n=3, raw_n=2)
+    assert rep.rows == [{"id": "a", "hostname": "h1", "band": "5 GHz"}]
+    assert rep.row_total == 2                 # pre-filter total preserved
+    assert rep.filters_applied == {"band": "5 GHz"}
+
+
+def test_collect_module_drill_sample_and_error_capture():
+    from ruckus_dashboard.reports.collect import _collect_module
+
+    def drill(ctx, entity_id):
+        if entity_id == "b":
+            raise RuntimeError("drill blew up")
+        return {"identity": {"id": entity_id}, "raw": {"k": "v"}}
+
+    spec = _spec(
+        fetcher=lambda ctx: {"items": [{"id": "a", "hostname": "h1"},
+                                       {"id": "b", "hostname": "h2"}]},
+        drill_fetcher=drill,
+        drill_tabs=(TabSpec(slug="summary", title="Summary"),),
+    )
+    rep = _collect_module(spec, _ctx(), gate=CapabilityGate(set()),
+                          filters={}, drill_n=2, raw_n=2)
+    assert len(rep.drill_samples) == 2
+    ok = next(d for d in rep.drill_samples if d.entity_id == "a")
+    bad = next(d for d in rep.drill_samples if d.entity_id == "b")
+    assert ok.sections["identity"]["id"] == "a" and ok.error is None
+    assert bad.error and "drill blew up" in bad.error

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .model import ColumnSpec
+from .model import ColumnSpec, DrillSample, ModuleReport
 
 LOG = logging.getLogger("ruckus.reports")
 
@@ -139,3 +139,77 @@ def _rows_from_payload(payload: dict,
     raw_rows = payload.get("raw_rows")
     raw = list(raw_rows) if raw_rows else items[:raw_n]
     return items, total, raw, None
+
+
+def _error_message(exc: Exception, config: dict) -> str:
+    """Error text for the report. Appends the controller's raw body only when
+    ``RUCKUS_SHOW_DEBUG`` is set — mirror of routes/modules.py:_upstream_message,
+    so the report never leaks upstream bodies by default."""
+    from ..clients.base import RuckusClientError
+    message = str(getattr(exc, "message", None) or exc)
+    if (config or {}).get("RUCKUS_SHOW_DEBUG") and isinstance(exc, RuckusClientError):
+        debug = exc.debug if isinstance(exc.debug, dict) else {}
+        raw = debug.get("raw")
+        if raw:
+            message = f"{message} :: {raw}"
+    return message
+
+
+def _error_dict(exc: Exception, label: str, slug: str, config: dict) -> dict:
+    from ..clients.base import RuckusClientError
+    status = exc.status_code if isinstance(exc, RuckusClientError) else 502
+    return {"connection": label, "endpoint": slug,
+            "message": _error_message(exc, config), "status": status}
+
+
+def _collect_module(spec, ctx, *, gate, filters: dict,
+                    drill_n: int, raw_n: int) -> ModuleReport:
+    """Harvest one module into a ``ModuleReport``. Never raises."""
+    columns = [ColumnSpec(c.label, c.key, c.kind) for c in spec.columns]
+    rep = ModuleReport(slug=spec.slug, title=spec.title, group=spec.group,
+                       status="ok", columns=columns,
+                       filters_applied=dict(filters or {}))
+
+    if not gate.satisfied(spec.requires_capabilities):
+        rep.status = "disabled"
+        rep.note = "module unavailable on this controller"
+        return rep
+
+    try:
+        payload = spec.fetcher(ctx) or {}
+    except Exception as exc:  # noqa: BLE001 — one module never aborts the report
+        LOG.warning("report: %s fetch failed", spec.slug)
+        rep.status = "error"
+        rep.errors.append(_error_dict(exc, ctx.connection_label, spec.slug,
+                                      ctx.config))
+        return rep
+
+    all_rows, total, raw_samples, note = _rows_from_payload(payload, raw_n=raw_n)
+    try:
+        rep.summary = spec.summary_fn(payload) or {}
+    except Exception:  # noqa: BLE001
+        rep.summary = {}
+    rep.row_total = total
+    rep.raw_samples = raw_samples
+    if note:
+        rep.note = note
+
+    filtered = apply_filter(all_rows, filters or {})
+    rep.rows = project_columns(filtered, columns)
+
+    if spec.drill_fetcher is not None and drill_n > 0:
+        for row in filtered:
+            if len(rep.drill_samples) >= drill_n:
+                break
+            ident = row.get("id")
+            if ident in (None, ""):
+                continue
+            try:
+                sections = spec.drill_fetcher(ctx, str(ident)) or {}
+                rep.drill_samples.append(
+                    DrillSample(entity_id=str(ident), sections=sections))
+            except Exception as exc:  # noqa: BLE001
+                rep.drill_samples.append(
+                    DrillSample(entity_id=str(ident),
+                                error=_error_message(exc, ctx.config)))
+    return rep
