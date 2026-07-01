@@ -34,3 +34,23 @@ def test_filters_have_valid_keys_and_kinds():
                 f"{m.slug}: filter label must be non-empty str"
             assert flt.kind in FILTER_KINDS, \
                 f"{m.slug}: bad filter kind {flt.kind!r}"
+
+
+RESOLVED_FILTER_KINDS = {"select", "search", "range"}
+
+
+def test_resolved_filters_valid_and_cover_columns():
+    for m in all_modules():
+        suppressed = {c.key for c in m.columns
+                      if not c.filterable or c.filter_kind == "none"}
+        resolved_keys = {f.key for f in m.resolved_filters}
+        for f in m.resolved_filters:
+            assert isinstance(f.key, str) and f.key, \
+                f"{m.slug}: resolved filter key must be non-empty str"
+            assert f.kind in RESOLVED_FILTER_KINDS, \
+                f"{m.slug}: bad resolved filter kind {f.kind!r}"
+        for col in m.columns:
+            if col.key in suppressed:
+                continue
+            assert col.key in resolved_keys, \
+                f"{m.slug}: column {col.key!r} has no resolved filter"

@@ -1,6 +1,6 @@
 import pytest
 from ruckus_dashboard.modules._base import (
-    ModuleSpec, Column, Filter,
+    ModuleSpec, Column, Filter, resolve_filters, _infer_filter_kind,
 )
 
 def noop_fetcher(ctx): return {"items": []}
@@ -149,9 +149,6 @@ def test_filter_carries_server_filter_default_none():
     assert f2.server_filter == "ZONE_ID"
 
 
-from ruckus_dashboard.modules._base import resolve_filters, _infer_filter_kind
-
-
 def test_infer_filter_kind_by_column_kind():
     assert _infer_filter_kind("status") == "select"
     assert _infer_filter_kind("text") == "search"
@@ -210,3 +207,42 @@ def test_resolve_filters_no_columns_returns_overrides_only():
     out = resolve_filters((), overrides)
     assert [f.key for f in out] == ["severity"]
     assert resolve_filters((), ()) == ()
+
+
+def test_module_spec_computes_resolved_filters_from_columns():
+    spec = ModuleSpec(
+        slug="rf", title="RF", group="Wireless", icon="?",
+        poll_seconds=30, fetcher=noop_fetcher, drill_fetcher=None,
+        drill_tabs=(), summary_fn=noop_summary,
+        requires_platforms=("smartzone",), requires_capabilities=(),
+        supports_views=("table",),
+        columns=(Column("Name", "name"), Column("Status", "status", "status")),
+        filters=(),
+    )
+    by_key = {f.key: f for f in spec.resolved_filters}
+    assert by_key["name"].kind == "search"
+    assert by_key["status"].kind == "select"
+
+
+def test_module_spec_resolved_filters_default_empty_without_columns():
+    spec = ModuleSpec(
+        slug="rf2", title="RF2", group="Wireless", icon="?",
+        poll_seconds=30, fetcher=noop_fetcher, drill_fetcher=None,
+        drill_tabs=(), summary_fn=noop_summary,
+        requires_platforms=("smartzone",), requires_capabilities=(),
+        supports_views=("table",),
+    )
+    assert spec.resolved_filters == ()
+
+
+def test_module_spec_resolved_filters_honor_explicit_override():
+    spec = ModuleSpec(
+        slug="rf3", title="RF3", group="Wireless", icon="?",
+        poll_seconds=30, fetcher=noop_fetcher, drill_fetcher=None,
+        drill_tabs=(), summary_fn=noop_summary,
+        requires_platforms=("smartzone",), requires_capabilities=(),
+        supports_views=("table",),
+        columns=(Column("Zone", "zone", "text", server_filter="ZONE_ID"),),
+        filters=(),
+    )
+    assert spec.resolved_filters[0].server_filter == "ZONE_ID"

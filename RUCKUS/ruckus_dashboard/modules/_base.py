@@ -1,7 +1,7 @@
 """ModuleSpec contract — every dashboard module declares one."""
 from __future__ import annotations
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Any
 
 VALID_GROUPS = {"Wireless", "Switching", "Cross-cutting"}
@@ -113,6 +113,7 @@ class ModuleSpec:
     merge: Callable[[list[dict]], dict] | None = None
     columns: tuple[Column, ...] = ()
     filters: tuple[Filter, ...] = ()
+    resolved_filters: tuple[Filter, ...] = field(default=(), init=False, compare=False)
 
     def __post_init__(self) -> None:
         if not SLUG_RE.match(self.slug):
@@ -127,3 +128,5 @@ class ModuleSpec:
                 raise ValueError(f"unknown platform {platform!r}; allowed: {VALID_PLATFORMS}")
         if self.poll_seconds < 5:
             raise ValueError("poll_seconds must be >= 5")
+        object.__setattr__(self, "resolved_filters",
+                           resolve_filters(self.columns, self.filters))
