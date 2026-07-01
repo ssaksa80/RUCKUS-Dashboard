@@ -57,3 +57,38 @@ def test_build_config_database_url_defaults_empty(monkeypatch, tmp_path):
     monkeypatch.delenv("RUCKUS_DATABASE_URL", raising=False)
     cfg = build_config(str(tmp_path))
     assert cfg["RUCKUS_DATABASE_URL"] == ""  # resolved by db.init_db
+
+
+# ── OIDC SSO (PB2) ────────────────────────────────────────────────────────────
+
+def test_build_config_oidc_defaults_off(monkeypatch, tmp_path):
+    for name in (
+        "RUCKUS_OIDC_ISSUER", "RUCKUS_OIDC_CLIENT_ID", "RUCKUS_OIDC_CLIENT_SECRET",
+        "RUCKUS_OIDC_SCOPES", "RUCKUS_OIDC_GROUPS_CLAIM", "RUCKUS_OIDC_GROUP_ROLES",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    cfg = build_config(str(tmp_path))
+    # Unconfigured issuer/client => OIDC stays disabled (local-only).
+    assert cfg["RUCKUS_OIDC_ISSUER"] == ""
+    assert cfg["RUCKUS_OIDC_CLIENT_ID"] == ""
+    assert cfg["RUCKUS_OIDC_CLIENT_SECRET"] == ""
+    # Sensible defaults for the optional knobs.
+    assert cfg["RUCKUS_OIDC_SCOPES"] == "openid email profile"
+    assert cfg["RUCKUS_OIDC_GROUPS_CLAIM"] == "groups"
+    assert cfg["RUCKUS_OIDC_GROUP_ROLES"] == ""
+
+
+def test_build_config_oidc_from_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("RUCKUS_OIDC_ISSUER", "https://idp.corp.local")
+    monkeypatch.setenv("RUCKUS_OIDC_CLIENT_ID", "ruckus")
+    monkeypatch.setenv("RUCKUS_OIDC_CLIENT_SECRET", "s3cret")
+    monkeypatch.setenv("RUCKUS_OIDC_SCOPES", "openid email")
+    monkeypatch.setenv("RUCKUS_OIDC_GROUPS_CLAIM", "roles")
+    monkeypatch.setenv("RUCKUS_OIDC_GROUP_ROLES", "admins:admin,noc:operator")
+    cfg = build_config(str(tmp_path))
+    assert cfg["RUCKUS_OIDC_ISSUER"] == "https://idp.corp.local"
+    assert cfg["RUCKUS_OIDC_CLIENT_ID"] == "ruckus"
+    assert cfg["RUCKUS_OIDC_CLIENT_SECRET"] == "s3cret"
+    assert cfg["RUCKUS_OIDC_SCOPES"] == "openid email"
+    assert cfg["RUCKUS_OIDC_GROUPS_CLAIM"] == "roles"
+    assert cfg["RUCKUS_OIDC_GROUP_ROLES"] == "admins:admin,noc:operator"
