@@ -79,3 +79,15 @@ def test_render_node_markup_carries_glow_style():
     fo = float(re.search(r"--glow:\s*([0-9.]+)", got["so"]).group(1))
     fn = float(re.search(r"--glow:\s*([0-9.]+)", got["sn"]).group(1))
     assert fo > fn
+
+
+def test_ribbon_counts_tallies_status_and_alarms():
+    got = _run(
+        "const nodes=["
+        "{id:'a',status:'online',meta:{}},"
+        "{id:'b',status:'offline',meta:{}},"
+        "{id:'c',status:'flagged',meta:{alarm_count:2}},"
+        "{id:'d',status:'online',meta:{alarm_count:1}}];"
+        "console.log(JSON.stringify(T.ribbonCounts(nodes)));"
+    )
+    assert got == {"online": 2, "flagged": 1, "offline": 1, "alarms": 3, "total": 4}

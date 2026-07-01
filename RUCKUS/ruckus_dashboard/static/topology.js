@@ -97,6 +97,30 @@ function nodeGlowStyle(n) {
   return `--glow:${w.toFixed(3)}`;
 }
 
+function ribbonCounts(nodes) {
+  // Live fleet tally for the status ribbon. Alarms summed across all nodes.
+  const c = { online: 0, flagged: 0, offline: 0, alarms: 0, total: nodes.length };
+  nodes.forEach(n => {
+    if (n.status === "online") c.online += 1;
+    else if (n.status === "flagged") c.flagged += 1;
+    else if (n.status === "offline") c.offline += 1;
+    c.alarms += (n.meta && Number(n.meta.alarm_count)) || 0;
+  });
+  return c;
+}
+
+function updateStatusRibbon(root, nodes) {
+  const el = root.querySelector("[data-topo-ribbon]");
+  if (!el) return;
+  const c = ribbonCounts(nodes);
+  el.innerHTML =
+    `<span class="rib-item rib-online"><b>${c.online}</b> online</span>` +
+    `<span class="rib-item rib-flagged"><b>${c.flagged}</b> flagged</span>` +
+    `<span class="rib-item rib-offline"><b>${c.offline}</b> offline</span>` +
+    `<span class="rib-item rib-alarms"><b>${c.alarms}</b> alarms</span>` +
+    `<span class="rib-item rib-total"><b>${c.total}</b> nodes</span>`;
+}
+
 function layoutGraph(nodes, edges, saved, pinned) {
   saved = saved || {}; pinned = pinned || new Set();
   const pos = {};
@@ -343,6 +367,7 @@ function renderTopology(root, payload) {
     [n.id, { status: n.status, alarms: (n.meta && n.meta.alarm_count) || 0 }]));
   topoState.nodes = nodes; topoState.edges = edges;
   topoState.legend = data.legend; topoState.root = root;
+  updateStatusRibbon(root, nodes);
 
   // Collapse filter: full graph stays in state (toast diffing above), only
   // visible nodes are laid out and drawn.
@@ -693,6 +718,6 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
 // sync with the pure functions exercised by tests/integration/test_topology_node.py.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle,
+    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts,
   };
 }
