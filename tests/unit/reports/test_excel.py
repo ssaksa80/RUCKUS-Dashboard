@@ -78,3 +78,44 @@ def test_build_report_legacy_dict_still_renders_curated_sheets():
     assert len(wb["APs by Zone"]._charts) == 1
     assert len(wb["Clients"]._charts) == 1
     assert len(wb["Alarms"]._charts) == 1
+
+
+def test_module_sheet_has_summary_list_raw_and_drill():
+    blob = build_report(_model())
+    wb = openpyxl.load_workbook(io.BytesIO(blob))
+    # The aps module gets its own sheet (safe name == title, fits in 31 chars).
+    assert "Access Points" in wb.sheetnames
+    ws = wb["Access Points"]
+    text = "\n".join(str(c.value) for row in ws.iter_rows()
+                     for c in row if c.value is not None)
+    assert "Summary" in text and "online" in text      # summary block
+    assert "AP1" in text and "AP2" in text              # list rows
+    assert "apMac" in text                              # raw field-map key
+    assert "Drill" in text                              # drill block label
+
+
+def test_disabled_module_sheet_notes_status():
+    wb = openpyxl.load_workbook(io.BytesIO(build_report(_model())))
+    assert "Topology" in wb.sheetnames
+    ws = wb["Topology"]
+    text = "\n".join(str(c.value) for row in ws.iter_rows()
+                     for c in row if c.value is not None)
+    assert "disabled" in text
+
+
+def test_list_rows_capped_with_more_note():
+    big = ReportModel(
+        generated_at="t", connection_label="x",
+        modules=[ModuleReport(
+            slug="clients", title="Clients", group="Wireless", status="ok",
+            columns=[ColumnSpec("Host", "hostname")],
+            rows=[{"id": str(i), "hostname": f"h{i}"} for i in range(1500)],
+            row_total=1500)])
+    wb = openpyxl.load_workbook(io.BytesIO(build_report(big)))
+    # The generic clients module sheet (title "Clients") is deduped against the
+    # curated "Clients" chart sheet — locate it by its A1 heading, not by name.
+    ws = next(s for s in wb.worksheets if s["A1"].value == "Clients"
+              and s["A2"].value == "Status: ok")
+    text = "\n".join(str(c.value) for row in ws.iter_rows()
+                     for c in row if c.value is not None)
+    assert "more" in text.lower()                       # "+N more" note present

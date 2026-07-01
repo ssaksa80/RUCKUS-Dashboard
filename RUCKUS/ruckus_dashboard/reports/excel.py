@@ -256,6 +256,101 @@ def _build_coverage(wb: Workbook, model: ReportModel) -> None:
     _autofit(ws, [26, 14, 10, 8, 8, 40])
 
 
+_LIST_ROW_CAP = 1000
+
+
+def _fmt_value(value, kind: str):
+    """Light, render-only formatting matching the dashboard idioms."""
+    if value is None:
+        return ""
+    if kind == "bytes":
+        try:
+            return _human_bytes_xl(int(value))
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def _human_bytes_xl(n: int) -> str:
+    v = float(n or 0)
+    if v <= 0:
+        return "0 B"
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if v < 1024:
+            return f"{v:.0f} {unit}" if unit == "B" else f"{v:.1f} {unit}"
+        v /= 1024
+    return f"{v:.1f} EB"
+
+
+def _kv_block(ws, row: int, title: str, mapping: dict) -> int:
+    """Write a 'title' header then key/value rows. Returns the next free row."""
+    ws.cell(row=row, column=1, value=title).font = Font(bold=True)
+    row += 1
+    for k, v in (mapping or {}).items():
+        ws.cell(row=row, column=1, value=str(k))
+        ws.cell(row=row, column=2, value=v if not isinstance(v, (dict, list))
+                else str(v))
+        row += 1
+    return row + 1
+
+
 def _build_module_sheets(wb: Workbook, model: ReportModel) -> None:
-    # Replaced in Task 9 with the generic per-module sheets.
-    return
+    used = {ws_title for ws_title in wb.sheetnames}
+    for m in model.modules:
+        ws = wb.create_sheet(_safe_sheet_name(m.title, used))
+        ws["A1"] = m.title
+        ws["A1"].font = Font(bold=True, size=14)
+        ws["A2"] = f"Status: {m.status}"
+        if m.note:
+            ws["A3"] = m.note
+        if m.filters_applied:
+            applied = ", ".join(f"{k}={v}" for k, v in m.filters_applied.items()
+                                if v)
+            ws["B2"] = f"Filters: {applied}" if applied else "Filters: none"
+        row = 5
+        row = _kv_block(ws, row, "Summary", m.summary)
+
+        # List table.
+        ws.cell(row=row, column=1, value="List").font = Font(bold=True)
+        row += 1
+        if m.columns and m.rows:
+            labels = [c.label for c in m.columns]
+            _header(ws, row, labels)
+            row += 1
+            shown = m.rows[:_LIST_ROW_CAP]
+            for r in shown:
+                for col, c in enumerate(m.columns, start=1):
+                    ws.cell(row=row, column=col,
+                            value=_fmt_value(r.get(c.key), c.kind))
+                row += 1
+            extra = len(m.rows) - len(shown)
+            if extra > 0:
+                ws.cell(row=row, column=1, value=f"+{extra} more rows (capped)")
+                row += 1
+        else:
+            ws.cell(row=row, column=1,
+                    value="(no list)" if not m.rows else "(no columns declared)")
+            row += 1
+        row += 1
+
+        # Raw field-map samples.
+        if m.raw_samples:
+            ws.cell(row=row, column=1, value="Raw field map").font = Font(bold=True)
+            row += 1
+            for i, sample in enumerate(m.raw_samples, start=1):
+                row = _kv_block(ws, row, f"Sample {i}", sample)
+
+        # Drill samples.
+        if m.drill_samples:
+            ws.cell(row=row, column=1, value="Drill samples").font = Font(bold=True)
+            row += 1
+            for d in m.drill_samples:
+                if d.error:
+                    ws.cell(row=row, column=1,
+                            value=f"{d.entity_id}: error — {d.error}")
+                    row += 2
+                    continue
+                for section, payload in (d.sections or {}).items():
+                    flat = payload if isinstance(payload, dict) else {"value": payload}
+                    row = _kv_block(ws, row, f"{d.entity_id} · {section}", flat)
+        _autofit(ws, [28, 32])
