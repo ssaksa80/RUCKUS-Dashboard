@@ -73,6 +73,16 @@ def test_notifications_page_renders(tmp_path):
         assert b"notifications.js" in r.data
 
 
+def test_notifications_page_has_single_csrf_meta(tmp_path):
+    """base.html emits the csrf-token meta in <head>; the page must not add a
+    second one in its content block."""
+    app = _app(tmp_path)
+    with app.test_client() as c:
+        _login(c)
+        html = c.get("/notifications").get_data(as_text=True)
+        assert html.count('name="csrf-token"') == 1
+
+
 def test_notifications_config_roundtrip_includes_sp2_fields(tmp_path):
     """Config GET/POST roundtrip carries new SP2 alert fields."""
     app = _app(tmp_path)
