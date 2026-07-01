@@ -17,7 +17,13 @@ DEFAULTS: dict[str, Any] = {
     "alerts": {"enabled": False, "recipients": [], "check_seconds": 300,
                "rules": {"ap_offline": True, "switch_offline": True,
                          "critical_alarm": True, "poor_client_ap": True},
-               "offline_threshold": 1},
+               "offline_threshold": 1,
+               # SP2 additions (additive, backward-compatible):
+               "recovery": True,
+               "debounce_seconds": 120,
+               "group_by": "site",
+               "suppress_known_on_start": True,
+               "channels": {"email": {"enabled": True, "recipients": []}}},
     "report": {"enabled": False, "recipients": [], "time": "07:00"},
 }
 
@@ -34,6 +40,16 @@ def _merged(stored: dict) -> dict:
     if isinstance(stored.get("alerts", {}).get("rules"), dict):
         out["alerts"]["rules"] = {**DEFAULTS["alerts"]["rules"],
                                   **stored["alerts"]["rules"]}
+    if isinstance(stored.get("alerts", {}).get("channels"), dict):
+        out["alerts"]["channels"] = {
+            **DEFAULTS["alerts"]["channels"],
+            **stored["alerts"]["channels"],
+        }
+    # Backward-compat: if channels absent but recipients exist, propagate.
+    if not stored.get("alerts", {}).get("channels"):
+        legacy = (stored.get("alerts") or {}).get("recipients") or []
+        if legacy:
+            out["alerts"]["channels"]["email"]["recipients"] = legacy
     return out
 
 

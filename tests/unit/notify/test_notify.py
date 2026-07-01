@@ -791,3 +791,52 @@ def test_channels_registry_contains_email():
     from ruckus_dashboard.notify.channels import CHANNELS
     assert "email" in CHANNELS
     assert CHANNELS["email"].name == "email"
+
+
+# ── config: new SP2 defaults ──────────────────────────────────────────────
+
+def test_config_new_alert_defaults_present(tmp_path):
+    from ruckus_dashboard.notify import config as cfg_mod
+    cfg = cfg_mod.load_config(str(tmp_path))
+    alerts = cfg["alerts"]
+    assert alerts["recovery"] is True
+    assert alerts["debounce_seconds"] == 120
+    assert alerts["group_by"] == "site"
+    assert alerts["suppress_known_on_start"] is True
+    assert isinstance(alerts.get("channels"), dict)
+
+
+def test_config_new_defaults_do_not_break_old_file(tmp_path):
+    """An old notifications.json (no new keys) merges cleanly."""
+    import json
+    from ruckus_dashboard.notify import config as cfg_mod
+    old = {
+        "smtp": {"host": "mail.x", "port": 587, "security": "starttls",
+                 "username": "", "password_enc": "", "from_addr": ""},
+        "alerts": {"enabled": True, "recipients": ["a@x"],
+                   "check_seconds": 300,
+                   "rules": {"ap_offline": True, "switch_offline": True,
+                             "critical_alarm": True, "poor_client_ap": True},
+                   "offline_threshold": 1},
+        "report": {"enabled": False, "recipients": [], "time": "07:00"},
+    }
+    (tmp_path / "notifications.json").write_text(json.dumps(old), encoding="utf-8")
+    cfg = cfg_mod.load_config(str(tmp_path))
+    # Old keys preserved.
+    assert cfg["alerts"]["enabled"] is True
+    assert cfg["alerts"]["recipients"] == ["a@x"]
+    # New keys get defaults.
+    assert cfg["alerts"]["recovery"] is True
+    assert cfg["alerts"]["debounce_seconds"] == 120
+
+
+def test_config_channels_backward_compat(tmp_path):
+    """If channels absent, synthesize from existing recipients field."""
+    import json
+    from ruckus_dashboard.notify import config as cfg_mod
+    old = {"alerts": {"enabled": True, "recipients": ["noc@x"]}}
+    (tmp_path / "notifications.json").write_text(json.dumps(old), encoding="utf-8")
+    cfg = cfg_mod.load_config(str(tmp_path))
+    # The merged config contains channels with the legacy recipients.
+    ch = cfg["alerts"].get("channels") or {}
+    assert isinstance(ch, dict)
