@@ -8,10 +8,13 @@ from flask import (Blueprint, current_app, jsonify, render_template, request,
                    send_file, session)
 
 from ..auth.csrf import validate_csrf
-from ..modules import all_modules
+from ..infra.capability_gate import CapabilityGate
+from ..modules import MODULES, all_modules
 from ..notify.config import (display_config, load_config, save_config,
                              smtp_password)
 from ..notify.mailer import send_email
+from ..reports.collect import collect_report_model
+from ..reports.excel import build_report
 
 bp = Blueprint("notifications", __name__)
 
@@ -134,3 +137,90 @@ def generate_report():
                                ".spreadsheetml.sheet"),
                      as_attachment=True,
                      download_name=f"ruckus-dso-report-{ts}.xlsx")
+
+
+def _valid_filters(spec, raw) -> dict:
+    """Keep only filters whose key the module exposes, mirroring the SP1 client
+    predicate (``dashboard.js:_applyFilters``).
+
+    Allowed keys: any resolved filter key (derived from the module's columns via
+    ``resolved_filters``), plus the free-text ``__search`` and the per-column
+    ``search:<col>`` / ``range:<col>`` forms. Scalar values are coerced to str;
+    ``range:`` dicts (``{min,max}``) and multi-select lists pass through as-is so
+    the in-model ``apply_filter`` sees the same shapes the browser sent."""
+    if not isinstance(raw, dict):
+        return {}
+    col_keys = {c.key for c in spec.columns}
+    resolved_keys = {f.key for f in spec.resolved_filters}
+    out: dict = {}
+    for key, val in raw.items():
+        key = str(key)
+        if key == "__search":
+            allowed = True
+        elif key.startswith("search:") or key.startswith("range:"):
+            allowed = key.split(":", 1)[1] in col_keys
+        else:
+            allowed = key in resolved_keys
+        if not allowed:
+            continue
+        if isinstance(val, (list, dict)):
+            out[key] = val
+        elif isinstance(val, (str, int, float)) and str(val) != "":
+            out[key] = str(val)
+    return out
+
+
+@bp.post("/api/reports/tab")
+def email_report_tab():
+    """E-mail the current tab (one module's sheet), honoring active filters."""
+    if not session.get("auth"):
+        return _unauth()
+    validate_csrf()
+    payload = request.get_json(silent=True) or {}
+    slug = str(payload.get("slug") or "")
+    spec = MODULES.get(slug)
+    if spec is None:
+        return jsonify({"error": f"unknown module: {slug}"}), 404
+
+    conn = None
+    for cid in session.get("connection_ids", []):
+        conn = current_app.connection_store.get(cid)
+        if conn is not None:
+            break
+    if conn is None:
+        return jsonify({"error": "Connection expired.", "reauth": True}), 401
+
+    gate = CapabilityGate(available=getattr(current_app, "available_ops", set()))
+    if not gate.satisfied(spec.requires_capabilities):
+        return jsonify({"sent": False,
+                        "error": "module unavailable on this controller"}), 422
+
+    filters = _valid_filters(spec, payload.get("filters"))
+    cfg = load_config(current_app.instance_path)
+    recipients = payload.get("recipients")
+    if not (isinstance(recipients, list) and
+            [r for r in recipients if isinstance(r, str) and r.strip()]):
+        recipients = cfg["report"]["recipients"]
+    if not [r for r in (recipients or []) if r and str(r).strip()]:
+        return jsonify({"sent": False, "error": "No recipients configured."}), 400
+
+    try:
+        model = collect_report_model(
+            conn, dict(current_app.config),
+            available_ops=getattr(current_app, "available_ops", set()),
+            slugs=(slug,), filters_by_slug={slug: filters})
+        xlsx = build_report(model)
+        ts = time.strftime("%Y%m%d-%H%M", time.gmtime())
+        send_email(cfg, smtp_password(cfg, current_app.secrets_manager),
+                   recipients,
+                   f"[RUCKUS DSO] {spec.title} report {ts}",
+                   f"Attached: {spec.title} tab report"
+                   + (" (filtered)." if filters else "."),
+                   attachment=xlsx,
+                   filename=f"ruckus-{slug}-{ts}.xlsx")
+        rep = model.by_slug(slug)
+        return jsonify({"sent": True, "recipients": recipients, "slug": slug,
+                        "rows": len(rep.rows) if rep else 0,
+                        "filtered": bool(filters)})
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"sent": False, "error": str(exc)}), 502

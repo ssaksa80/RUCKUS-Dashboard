@@ -129,3 +129,106 @@ def test_test_alert_email_sends_grouped_body(tmp_path, monkeypatch):
         assert calls["recipients"] == ["noc@x"]
         # Test alert body mentions the outage channel (not just "smtp works").
         assert "alert" in calls["body"].lower() or "RUCKUS DSO" in calls["subject"]
+
+
+def _authed_with_conn(tmp_path):
+    """App + one stored SmartZone connection; returns (app, csrf)."""
+    from ruckus_dashboard.auth.session_store import ConnectionConfig
+    app = _app(tmp_path)
+    conn = ConnectionConfig(platform="smartzone", api_base="https://sz/wsg/api/public",
+                            display_name="SZ-LAB", auth_token="t",
+                            api_version="v11_0", verify_tls=False,
+                            token_expires_at=9999999999)
+    cid = app.connection_store.put(conn)
+    app.available_ops = {("POST", "/query/client"), ("POST", "/query/ap")}
+    with app.test_client() as c:
+        c.get("/")
+        with c.session_transaction() as s:
+            s["auth"] = True
+            s["connection_ids"] = [cid]
+            csrf = s["csrf_token"]
+        yield c, csrf
+
+
+def test_reports_tab_requires_auth(tmp_path):
+    app = _app(tmp_path)
+    with app.test_client() as c:
+        assert c.post("/api/reports/tab", json={"slug": "clients"}).status_code == 401
+
+
+def test_reports_tab_requires_csrf(tmp_path):
+    for c, _csrf in [next(_authed_with_conn(tmp_path))]:
+        r = c.post("/api/reports/tab", json={"slug": "clients"})
+        assert r.status_code == 400          # missing X-CSRF-Token
+
+
+def test_reports_tab_unknown_slug_404(tmp_path):
+    for c, csrf in [next(_authed_with_conn(tmp_path))]:
+        r = c.post("/api/reports/tab", json={"slug": "nope"},
+                   headers={"X-CSRF-Token": csrf})
+        assert r.status_code == 404
+
+
+def test_reports_tab_happy_path_emails_one_module(tmp_path, monkeypatch):
+    import ruckus_dashboard.routes.notifications as notif_routes
+    import ruckus_dashboard.reports.collect as collect_mod
+    calls = {}
+
+    def fake_send(cfg, pw, recipients, subject, body, **kw):
+        calls["recipients"] = recipients
+        calls["subject"] = subject
+        calls["filename"] = kw.get("filename")
+        calls["has_attachment"] = kw.get("attachment") is not None
+
+    captured = {}
+    real_collect = collect_mod.collect_report_model
+
+    def spy_collect(*a, **kw):
+        captured["slugs"] = kw.get("slugs")
+        captured["filters_by_slug"] = kw.get("filters_by_slug")
+        return real_collect(*a, **kw)
+
+    monkeypatch.setattr(notif_routes, "send_email", fake_send)
+    monkeypatch.setattr(notif_routes, "collect_report_model", spy_collect)
+
+    gen = _authed_with_conn(tmp_path)
+    c, csrf = next(gen)
+    # Configure report recipients.
+    c.post("/api/notifications/config",
+           json={"smtp": {"host": "mail.x"}, "report": {"recipients": ["noc@x"]}},
+           headers={"X-CSRF-Token": csrf})
+    # Stub the clients fetcher so no HTTP happens.
+    import ruckus_dashboard.modules as modmod
+    import dataclasses
+    original = modmod.MODULES["clients"]
+    modmod.MODULES["clients"] = dataclasses.replace(
+        original,
+        fetcher=lambda ctx: {"items": [{"id": "a", "band": "5 GHz"},
+                                       {"id": "b", "band": "2.4 GHz"}]},
+        drill_fetcher=None)
+    try:
+        r = c.post("/api/reports/tab",
+                   json={"slug": "clients", "filters": {"band": "5 GHz"}},
+                   headers={"X-CSRF-Token": csrf})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_json()
+        assert body["sent"] is True
+        assert body["slug"] == "clients"
+        assert calls["recipients"] == ["noc@x"]
+        assert "clients" in calls["filename"]
+        assert calls["has_attachment"] is True
+        # Filters forwarded into the collector for that slug only.
+        assert captured["slugs"] == ("clients",)
+        assert captured["filters_by_slug"] == {"clients": {"band": "5 GHz"}}
+    finally:
+        modmod.MODULES["clients"] = original
+
+
+def test_reports_tab_disabled_module_returns_422(tmp_path):
+    gen = _authed_with_conn(tmp_path)
+    c, csrf = next(gen)
+    # 'rogues' requires ("POST","/query/roguesInfoList"), not in available_ops.
+    r = c.post("/api/reports/tab", json={"slug": "rogues"},
+               headers={"X-CSRF-Token": csrf})
+    assert r.status_code == 422
+    assert r.get_json()["sent"] is False
