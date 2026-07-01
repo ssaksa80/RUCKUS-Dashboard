@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from urllib.parse import urlparse
 
 from flask import (
     Blueprint,
@@ -43,12 +44,22 @@ def _rate_key(email: str) -> str:
 
 
 def _safe_next(raw: str | None) -> str:
-    """Only allow same-site relative redirects (avoid open-redirect)."""
+    """Only allow same-site relative redirects (avoid open-redirect).
+
+    Rejects absolute URLs, scheme-relative ``//host``, and the backslash variant
+    ``/\\host`` — browsers normalise ``\\`` → ``/`` in the authority, so
+    ``/\\evil.com`` would otherwise resolve to ``//evil.com`` (a protocol-relative
+    redirect to an external host). Also rejects any control character, and
+    confirms via ``urlparse`` that the target carries no scheme and no netloc.
+    """
     if not raw:
         return url_for("pages.index")
-    # reject scheme-relative (//host) and absolute URLs
+    if "\\" in raw or any(ord(ch) < 0x20 for ch in raw):
+        return url_for("pages.index")
     if raw.startswith("/") and not raw.startswith("//"):
-        return raw
+        parsed = urlparse(raw)
+        if not parsed.scheme and not parsed.netloc:
+            return raw
     return url_for("pages.index")
 
 

@@ -35,6 +35,28 @@ def _csrf(c):
         return s.get("csrf_token", "")
 
 
+def test_safe_next_rejects_open_redirects(app):
+    """_safe_next must fall back to the index for any non-same-site target,
+    including the backslash variant browsers normalise to //host."""
+    from ruckus_dashboard.routes.auth import _safe_next
+    with app.test_request_context("/login"):
+        index = _safe_next(None)
+        for bad in (
+            "//evil.com",
+            "/\\evil.com",       # browsers read \ as / -> //evil.com
+            "/\\/evil.com",
+            "\\/evil.com",
+            "https://evil.com",
+            "http://evil.com",
+            "javascript:alert(1)",
+            "/\tinjected",       # control char
+        ):
+            assert _safe_next(bad) == index, f"open-redirect not blocked: {bad!r}"
+        # legitimate same-site relative paths pass through unchanged
+        assert _safe_next("/m/aps") == "/m/aps"
+        assert _safe_next("/m/aps?zone=HQ") == "/m/aps?zone=HQ"
+
+
 def _add_user(app, email, password, role, tenant_name="default"):
     with session_scope(app) as s:
         tenant = s.query(Tenant).filter_by(name=tenant_name).one()
