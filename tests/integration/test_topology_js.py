@@ -40,3 +40,10 @@ def test_topology_js_live_rates_and_ap_signal():
     js = pathlib.Path("RUCKUS/ruckus_dashboard/static/topology.js").read_text(encoding="utf-8")
     for sym in ["updateRates", "fmtRate", "prevTraffic", "rssi_avg", "live rate"]:
         assert sym in js, f"missing {sym}"
+
+
+def test_topology_js_has_node_export():
+    js = pathlib.Path("RUCKUS/ruckus_dashboard/static/topology.js").read_text(encoding="utf-8")
+    assert 'typeof module !== "undefined"' in js
+    assert 'typeof document !== "undefined"' in js
+    assert "module.exports" in js

@@ -653,7 +653,7 @@ function loadTopology(root) {
     .catch(() => {});
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded", () => {
   const root = document.querySelector("[data-topology]");
   if (!root) return;
   wireToolbar(root);
@@ -664,3 +664,11 @@ document.addEventListener("DOMContentLoaded", () => {
     .finally(() => loadTopology(root));
   setInterval(() => { if (!document.hidden) loadTopology(root); }, 60000);
 });
+
+// Node-only export for unit tests (no-op in the browser). Keep this list in
+// sync with the pure functions exercised by tests/integration/test_topology_node.py.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath,
+  };
+}
