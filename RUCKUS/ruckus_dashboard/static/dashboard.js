@@ -462,12 +462,19 @@ function renderFilters(root, slug, spec, items) {
     // select — options come from controller data (escape attr + text).
     const cur = state[f.key];
     const curArr = Array.isArray(cur) ? cur.map(String) : (cur ? [String(cur)] : []);
-    const values = Array.from(new Set(items.map(i => i[f.key]).filter(v => v != null && v !== "")))
-      .sort().map(v => {
-        const sel = curArr.includes(String(v)) ? " selected" : "";
+    const optionValues = Array.from(new Set(items.map(i => i[f.key]).filter(v => v != null && v !== ""))).sort();
+    // Drop a stale persisted selection no longer in the option universe, so the
+    // control doesn't silently filter to zero while visually showing "All".
+    const optionSet = new Set(optionValues.map(String));
+    if (curArr.length && curArr.some(v => !optionSet.has(v)) && activeFilters[slug]) {
+      delete activeFilters[slug][f.key];
+    }
+    const validCur = curArr.filter(v => optionSet.has(v));
+    const values = optionValues.map(v => {
+        const sel = validCur.includes(String(v)) ? " selected" : "";
         return `<option value="${_escape(v)}"${sel}>${_escape(v)}</option>`;
       }).join("");
-    const allSel = curArr.length ? "" : " selected";
+    const allSel = validCur.length ? "" : " selected";
     return `<label class="filter-control"><span>${_escape(f.label)}</span>` +
            `<select data-filter-key="${_escape(f.key)}"><option value=""${allSel}>All</option>${values}</select></label>`;
   });

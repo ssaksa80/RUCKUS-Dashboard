@@ -143,6 +143,21 @@ def test_dashboard_js_render_filters_per_column_controls_and_clear():
             "renderFilters must not short-circuit on dataset.built"
 
 
+def test_dashboard_js_render_filters_drops_stale_select_value():
+    """SP1: when a select's active value is no longer in the option universe,
+    renderFilters must drop it from activeFilters[slug] so the control does not
+    silently filter to zero while visually showing 'All'."""
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        fn = body.split("function renderFilters", 1)[1].split("function _escape", 1)[0]
+        # the select branch computes the current option universe and prunes a
+        # stale persisted selection from the store.
+        assert "delete" in fn, "renderFilters must delete stale select selections"
+        assert "activeFilters[slug]" in fn
+
+
 def test_dashboard_js_kpi_and_poor_ap_reflect_into_selects():
     from ruckus_dashboard.app import create_app
     app = create_app({"SECRET_KEY": "t"})
