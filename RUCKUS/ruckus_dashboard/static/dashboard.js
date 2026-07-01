@@ -181,11 +181,27 @@ function _applyFilters(slug, items) {
   return items.filter(row => {
     for (const [key, val] of Object.entries(f)) {
       if (val === "" || val == null) continue;
+      if (Array.isArray(val) && val.length === 0) continue;
       if (key === "__search") {
         const hay = Object.values(row).map(v => String(v ?? "")).join(" ").toLowerCase();
         if (!hay.includes(String(val).toLowerCase())) return false;
+      } else if (key.startsWith("search:")) {
+        const col = key.slice(7);
+        if (!String(row[col] ?? "").toLowerCase().includes(String(val).toLowerCase())) return false;
+      } else if (key.startsWith("range:")) {
+        const col = key.slice(6);
+        const n = Number(row[col]);
+        const lo = val.min === "" || val.min == null ? null : Number(val.min);
+        const hi = val.max === "" || val.max == null ? null : Number(val.max);
+        if (lo == null && hi == null) continue;
+        if (!isFinite(n)) return false;
+        if (lo != null && n < lo) return false;
+        if (hi != null && n > hi) return false;
+      } else if (Array.isArray(val)) {
+        // multi-select: row passes if its value is one of the selected.
+        if (!val.map(String).includes(String(row[key] ?? ""))) return false;
       } else if (String(row[key] ?? "") !== String(val)) {
-        return false;
+        return false;  // single-select exact match (KPI/poor-AP path)
       }
     }
     return true;

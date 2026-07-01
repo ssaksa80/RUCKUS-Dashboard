@@ -115,3 +115,14 @@ def test_dashboard_js_kpi_filter_clicks():
         for sym in ["KPI_FILTER_MAP", "applyKpiFilter", "data-kpi-key",
                     "poor_signal", "band_5"]:
             assert sym in body, f"missing {sym}"
+
+
+def test_dashboard_js_apply_filters_supports_search_and_range_keys():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        for sym in ['"search:"', '"range:"', "Array.isArray(val)",
+                    "startsWith(\"search:\")", "startsWith(\"range:\")",
+                    "__search"]:
+            assert sym in body, f"missing {sym}"
