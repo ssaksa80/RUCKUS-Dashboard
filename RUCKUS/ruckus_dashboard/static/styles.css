@@ -268,3 +268,14 @@ body.dso-mode .health-bar{display:none}
 .nf-disabled{opacity:.45}
 .drill-filters { margin: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .drill-filters .filter-control { font-size: 0.85rem; }
+
+.dash-toast {
+  position: fixed; bottom: 20px; right: 20px; z-index: 1000;
+  max-width: 360px; padding: 10px 14px; border-radius: 6px;
+  background: #1f2a37; color: #fff; opacity: 0;
+  transform: translateY(8px); transition: opacity .2s, transform .2s;
+  pointer-events: none; font-size: 14px;
+}
+.dash-toast.show { opacity: 1; transform: translateY(0); }
+.dash-toast[data-ok="0"] { background: #b03a2e; }
+.module-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

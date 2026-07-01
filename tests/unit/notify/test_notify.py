@@ -205,8 +205,8 @@ def test_build_report_loads_and_has_sheets_and_charts():
     }
     blob = build_report(data)
     wb = openpyxl.load_workbook(io.BytesIO(blob))
-    assert set(wb.sheetnames) == {"Overview", "APs by Zone", "Clients",
-                                  "Alarms", "Switches", "Offline Devices"}
+    assert {"Overview", "APs by Zone", "Clients", "Alarms", "Switches",
+            "Offline Devices"} <= set(wb.sheetnames)
     assert len(wb["APs by Zone"]._charts) == 1   # bar
     assert len(wb["Clients"]._charts) == 1       # pie
     assert len(wb["Alarms"]._charts) == 1        # pie

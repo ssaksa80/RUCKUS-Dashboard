@@ -167,3 +167,21 @@ def test_dashboard_js_drill_table_filters_present():
         # renderGenericTable still exists and is escape-safe
         assert "function renderGenericTable" in body
         assert "_escape(v ?? " in body or "_escape(v" in body
+
+
+def test_dashboard_js_has_email_tab_handler():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        for sym in ["wireEmailTab", "/api/reports/tab", "X-CSRF-Token",
+                    "data-email-tab", "activeFilters"]:
+            assert sym in body, f"missing JS symbol: {sym}"
+
+
+def test_dashboard_js_email_tab_reads_csrf_meta():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        assert 'meta[name="csrf-token"]' in body

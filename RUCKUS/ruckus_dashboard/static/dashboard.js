@@ -164,6 +164,7 @@ function renderModule(slug, payload) {
   const spec = moduleSpecs[slug] || {};
   renderFilters(root, slug, spec, items);
   wireViewToggle(root, slug, spec);
+  wireEmailTab(root, slug);
   renderData(root, slug, spec, items);
 
   const eb = root.querySelector("[data-error-banner]");
@@ -462,6 +463,58 @@ function _escape(v) {
   return String(v ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function _dashCsrf() {
+  const m = document.querySelector('meta[name="csrf-token"]');
+  return m ? m.content : "";
+}
+
+function _toast(message, ok) {
+  let host = document.querySelector(".dash-toast");
+  if (!host) {
+    host = document.createElement("div");
+    host.className = "dash-toast";
+    document.body.appendChild(host);
+  }
+  host.textContent = message;
+  host.dataset.ok = ok ? "1" : "0";
+  host.classList.add("show");
+  setTimeout(() => host.classList.remove("show"), 4000);
+}
+
+function wireEmailTab(root, slug) {
+  const btn = root.querySelector("[data-email-tab]");
+  if (!btn || btn.dataset.wired === "1") return;
+  btn.dataset.wired = "1";
+  btn.addEventListener("click", async () => {
+    // Same skip-empty rule as _applyFilters: only send active filter values.
+    const raw = activeFilters[slug] || {};
+    const filters = {};
+    Object.entries(raw).forEach(([k, v]) => {
+      if (v !== "" && v != null) filters[k] = v;
+    });
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/reports/tab", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json",
+                   "X-CSRF-Token": _dashCsrf() },
+        body: JSON.stringify({ slug, filters }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && body.sent) {
+        _toast(`Report e-mailed (${(body.recipients || []).join(", ")})`, true);
+      } else {
+        _toast(`Email failed: ${body.error || ("HTTP " + res.status)}`, false);
+      }
+    } catch (e) {
+      _toast(`Email failed: ${e.message}`, false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 // Key/value list for object-shaped sections (identity, health, raw object).

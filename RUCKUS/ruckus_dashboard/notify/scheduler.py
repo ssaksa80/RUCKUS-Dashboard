@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 from ..modules import MODULES
+from ..reports.collect import collect_report_data  # noqa: F401  re-export (alert path)
 from .channels import CHANNELS
 from .config import load_config, smtp_password
 from .mailer import send_email
@@ -28,25 +29,6 @@ from .state_store import JsonOutageStateStore
 LOG = logging.getLogger("ruckus.notify")
 
 TICK_SECONDS = 30
-
-
-def collect_report_data(connection, config: dict) -> dict[str, Any]:
-    """Run the relevant module fetchers (dump-style) for the report/alerts."""
-    from ..modules._base import FetcherContext
-    from ..infra.capability_gate import CapabilityGate
-
-    ctx = FetcherContext(connection=connection, config=config, filters=None,
-                         capability_gate=CapabilityGate(set()),
-                         connection_label=getattr(connection, "display_name", ""))
-    out: dict[str, Any] = {}
-    for slug, key in (("aps", "aps"), ("clients", "clients"),
-                      ("alarms", "alarms"), ("switches", "switches")):
-        try:
-            out[key] = (MODULES[slug].fetcher(ctx) or {}).get("items", [])
-        except Exception:  # noqa: BLE001
-            LOG.exception("notify: %s fetch failed", slug)
-            out[key] = []
-    return out
 
 
 def collect_device_snapshot(
@@ -180,6 +162,7 @@ class NotifyScheduler:
         self._app_config = app_config
         self._secrets = secrets
         self._connection = None
+        self._available_ops: set = set()
         self._lock = threading.Lock()
         self._last_alert_check = 0.0
         self._stop = threading.Event()
@@ -201,6 +184,10 @@ class NotifyScheduler:
             self._connection = connection
         # SP2: do NOT null committed state — the store is the source of truth.
         # A reconnect must not re-baseline (audit #4 fix).
+
+    def set_available_ops(self, ops) -> None:
+        with self._lock:
+            self._available_ops = set(ops or set())
 
     def clear_connection(self) -> None:
         with self._lock:
@@ -262,8 +249,11 @@ class NotifyScheduler:
             self._mark_report_sent(day)
             try:
                 from ..reports.excel import build_report
-                data = collect_report_data(connection, self._app_config)
-                xlsx = build_report(data)
+                from ..reports.collect import collect_report_model
+                model = collect_report_model(
+                    connection, self._app_config,
+                    available_ops=set(getattr(self, "_available_ops", set())))
+                xlsx = build_report(model)
                 ts = time.strftime("%Y-%m-%d", time.localtime(now))
                 send_email(cfg, smtp_password(cfg, self._secrets),
                            cfg["report"]["recipients"],
