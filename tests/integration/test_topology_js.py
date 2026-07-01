@@ -77,3 +77,10 @@ def test_topology_css_has_flow_styles():
     css = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css").read_text(encoding="utf-8")
     for rule in [".topo-flow-ribbon", ".topo-flow-col"]:
         assert rule in css, f"missing {rule}"
+
+
+def test_topology_template_has_view_toggle():
+    html = pathlib.Path("RUCKUS/ruckus_dashboard/templates/topology.html").read_text(encoding="utf-8")
+    assert "data-topo-view" in html
+    assert 'data-view="graph"' in html
+    assert 'data-view="flow"' in html
