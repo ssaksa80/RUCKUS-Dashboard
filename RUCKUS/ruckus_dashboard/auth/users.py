@@ -4,9 +4,11 @@ Local/break-glass users authenticate with an **argon2id** hash (via passlib);
 OIDC-only users (PB2) carry ``password_hash=None`` and never pass local verify.
 Plaintext passwords are never stored or logged.
 
-All functions take an explicit SQLAlchemy ``Session`` so they are trivially
+Most functions take an explicit SQLAlchemy ``Session`` so they are trivially
 testable and tenant-scoped by the caller. They do NOT commit — the caller owns
-the transaction boundary (request teardown / ``session_scope``).
+the transaction boundary (request teardown / ``session_scope``). The one
+exception is :func:`upsert_oidc_user` (PB2 JIT provisioning), which is called
+from the OIDC callback with the ``app`` and owns its own scope.
 """
 from __future__ import annotations
 
@@ -18,7 +20,8 @@ from passlib.context import CryptContext
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..db.models import Role, User
+from ..db import session_scope
+from ..db.models import Role, Tenant, User
 
 LOG = logging.getLogger("ruckus_dashboard.auth.users")
 
@@ -146,3 +149,79 @@ def bootstrap_admin(
         "bootstrap: seeded break-glass admin user 'admin' (tenant %s)", tenant_id
     )
     return admin, generated
+
+
+def _default_tenant_id(session: Session) -> int:
+    """Resolve the tenant new OIDC users land in (PB1's single tenant).
+
+    Prefers the ``default`` tenant seeded at boot; falls back to the
+    lowest-id tenant if it was renamed. Raises if no tenant exists at all
+    (the identity layer always seeds one, so this is defensive).
+    """
+    tenant = session.query(Tenant).filter_by(name="default").one_or_none()
+    if tenant is None:
+        tenant = session.query(Tenant).order_by(Tenant.id).first()
+    if tenant is None:  # pragma: no cover - seed_identity always creates one
+        raise RuntimeError("no tenant exists; identity layer not seeded")
+    return tenant.id
+
+
+def upsert_oidc_user(
+    app,
+    *,
+    subject: str,
+    email: str,
+    display_name: Optional[str],
+    role: "str | Role",
+) -> User:
+    """Just-in-time provision (or update) the app user for an OIDC login.
+
+    Resolution order:
+      1. an existing user whose ``oidc_subject`` already matches ``subject``;
+      2. else an existing **local** user with the same email (attach the
+         subject — first SSO login for a previously local/admin-created
+         account, preserving any existing password as a break-glass path);
+      3. else create a fresh OIDC-only user in the default tenant.
+
+    On every login the ``display_name``, ``role`` (from the group→role map) and
+    ``last_login_at`` are refreshed. A password is **never** set here. Opens its
+    own transactional scope and returns the committed User; because the session
+    factory uses ``expire_on_commit=False`` the returned instance's attributes
+    stay readable after the scope closes, so the caller can set the session
+    identity from it.
+    """
+    role_name = Role.coerce(role).name  # raises on unknown role
+    norm_email = _normalize_email(email)
+    with session_scope(app) as s:
+        user = (
+            s.query(User).filter(User.oidc_subject == subject).one_or_none()
+        )
+        if user is None and norm_email:
+            # Attach the subject to a pre-existing local account (matched by
+            # email) rather than creating a duplicate.
+            existing = get_by_email(s, norm_email)
+            if existing is not None:
+                user = existing
+                user.oidc_subject = subject
+
+        if user is None:
+            user = User(
+                tenant_id=_default_tenant_id(s),
+                email=norm_email,
+                display_name=display_name,
+                password_hash=None,  # OIDC-only: never a local password
+                role=role_name,
+                oidc_subject=subject,
+                is_active=True,
+            )
+            s.add(user)
+        else:
+            # Refresh from the IdP on each login.
+            if display_name is not None:
+                user.display_name = display_name
+            user.role = role_name
+            s.add(user)
+
+        record_login(s, user)
+        s.flush()  # assign PK before the scope commits
+    return user
