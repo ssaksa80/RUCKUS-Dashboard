@@ -665,8 +665,17 @@ def smartzone_query_body(filters: dict[str, Any] | None = None) -> dict[str, Any
     except (TypeError, ValueError):
         limit = 500
     body: dict[str, Any] = {"page": page, "limit": limit}
-    if f.get("zone"):
-        body["filters"] = [{"type": "ZONE_ID", "value": f["zone"]}]
+    query_filters: list[dict[str, Any]] = []
+    # Declarative push-down: every present server_filter token (collected by
+    # routes._parse_filters under "__server") maps to a /query/* filter clause.
+    for token, value in (f.get("__server") or {}).items():
+        if value:
+            query_filters.append({"type": token, "value": value})
+    # Legacy shortcut: a bare {"zone": ...} still pushes ZONE_ID (back-compat).
+    if f.get("zone") and not any(c["type"] == "ZONE_ID" for c in query_filters):
+        query_filters.append({"type": "ZONE_ID", "value": f["zone"]})
+    if query_filters:
+        body["filters"] = query_filters
     return body
 
 
