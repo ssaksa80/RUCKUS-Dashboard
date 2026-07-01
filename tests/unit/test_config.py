@@ -31,3 +31,29 @@ def test_build_config_new_ui_flag(monkeypatch, tmp_path):
     monkeypatch.setenv("RUCKUS_ENABLE_NEW_UI", "1")
     cfg = build_config(str(tmp_path))
     assert cfg["RUCKUS_ENABLE_NEW_UI"] is True
+
+
+def test_build_config_auth_required_defaults_on(monkeypatch, tmp_path):
+    monkeypatch.delenv("RUCKUS_AUTH_REQUIRED", raising=False)
+    cfg = build_config(str(tmp_path))
+    assert cfg["RUCKUS_AUTH_REQUIRED"] is True  # PhaseB default: enforce app-login
+
+
+def test_build_config_auth_required_off_switch(monkeypatch, tmp_path):
+    monkeypatch.setenv("RUCKUS_AUTH_REQUIRED", "0")
+    cfg = build_config(str(tmp_path))
+    assert cfg["RUCKUS_AUTH_REQUIRED"] is False
+
+
+def test_build_config_database_url_and_admin_pw_from_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("RUCKUS_DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch.setenv("RUCKUS_ADMIN_PASSWORD", "seed-pw")
+    cfg = build_config(str(tmp_path))
+    assert cfg["RUCKUS_DATABASE_URL"] == "sqlite:///:memory:"
+    assert cfg["RUCKUS_ADMIN_PASSWORD"] == "seed-pw"
+
+
+def test_build_config_database_url_defaults_empty(monkeypatch, tmp_path):
+    monkeypatch.delenv("RUCKUS_DATABASE_URL", raising=False)
+    cfg = build_config(str(tmp_path))
+    assert cfg["RUCKUS_DATABASE_URL"] == ""  # resolved by db.init_db
