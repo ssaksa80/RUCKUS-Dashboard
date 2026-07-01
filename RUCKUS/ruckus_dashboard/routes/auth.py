@@ -1,0 +1,270 @@
+"""App-user auth blueprint (Phase B, PB1): local login/logout + admin user CRUD.
+
+Layer 1 of the two-layer auth model — *who the operator is* — distinct from the
+controller connection (Layer 2, ``routes/connect.py``). Local break-glass login
+verifies an argon2id password, rotates the session (fixation guard, mirroring the
+controller-connect ``session.clear()``), and audits every attempt. Admin user
+management is gated by ``@require_role("admin")``.
+
+OIDC (PB2) will add ``/login/oidc`` + ``/auth/callback`` alongside this; the
+local path always remains as the air-gapped break-glass.
+"""
+from __future__ import annotations
+
+import logging
+import secrets
+
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    g,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+
+from ..auth.audit import record_audit
+from ..auth.csrf import validate_csrf
+from ..auth import users as users_mod
+from ..db import session_scope
+from ..db.models import Role, Tenant, User
+
+LOG = logging.getLogger("ruckus_dashboard.auth")
+
+bp = Blueprint("auth", __name__)
+
+
+def _rate_key(email: str) -> str:
+    ip = request.remote_addr or "?"
+    return f"{ip}|{(email or '').strip().lower()}"
+
+
+def _safe_next(raw: str | None) -> str:
+    """Only allow same-site relative redirects (avoid open-redirect)."""
+    if not raw:
+        return url_for("pages.index")
+    # reject scheme-relative (//host) and absolute URLs
+    if raw.startswith("/") and not raw.startswith("//"):
+        return raw
+    return url_for("pages.index")
+
+
+@bp.get("/login")
+def login():
+    # Exempt from the user gate; ensure a csrf token exists for the POST.
+    session.setdefault("csrf_token", secrets.token_urlsafe(32))
+    return render_template(
+        "auth_login.html", csrf_token=session.get("csrf_token", "")
+    )
+
+
+@bp.post("/login")
+def login_post():
+    validate_csrf()
+    email = (request.form.get("email") or "").strip()
+    password = request.form.get("password") or ""
+    limiter = current_app.login_rate_limiter
+    key = _rate_key(email)
+
+    if limiter.is_locked(key):
+        record_audit(current_app, action="login_ratelimited",
+                     detail={"email": email})
+        flash("Too many failed attempts. Try again later.", "error")
+        return _login_error(status=429)
+
+    with session_scope(current_app) as s:
+        user = users_mod.get_by_email(s, email)
+        ok = (
+            user is not None
+            and user.is_active
+            and users_mod.verify_password(user, password)
+        )
+        if not ok:
+            limiter.register_failure(key)
+            reason = (
+                "unknown_user" if user is None
+                else "inactive" if not user.is_active
+                else "bad_password"
+            )
+            record_audit(current_app, action="login_failure",
+                         user_id=(user.id if user else None),
+                         tenant_id=(user.tenant_id if user else None),
+                         detail={"email": email, "reason": reason})
+            flash("Invalid credentials.", "error")
+            return _login_error(status=401)
+
+        # Success: capture identity, then rotate the session.
+        users_mod.record_login(s, user)
+        uid, tid, role = user.id, user.tenant_id, user.role
+
+    limiter.reset(key)
+    _rotate_session_for_login(uid, tid, role)
+    record_audit(current_app, action="login_success", user_id=uid,
+                 tenant_id=tid, detail={"email": email})
+    return redirect(_safe_next(request.form.get("next") or request.args.get("next")))
+
+
+def _login_error(status: int):
+    """Re-render the login page with the given status (failed/locked out)."""
+    return (
+        render_template("auth_login.html", csrf_token=session.get("csrf_token", "")),
+        status,
+    )
+
+
+def _rotate_session_for_login(user_id: int, tenant_id: int, role: str) -> None:
+    """Session-fixation guard: clear then set identity (mirrors controller connect).
+
+    Preserves the csrf token across the rotation so the very next POST still
+    validates, exactly like ``routes/connect.py``.
+    """
+    csrf_token = session.get("csrf_token", secrets.token_urlsafe(32))
+    session.clear()
+    session["csrf_token"] = csrf_token
+    session["user_id"] = user_id
+    session["tenant_id"] = tenant_id
+    session["role"] = role
+    session.permanent = True
+
+
+@bp.post("/logout/app")
+def logout_app():
+    """App-user logout — distinct from the controller ``/logout``.
+
+    Clears the app-user identity but preserves the csrf token. Does not touch
+    live controller connections (that is the controller logout's job).
+    """
+    validate_csrf()
+    uid = session.get("user_id")
+    tid = session.get("tenant_id")
+    csrf_token = session.get("csrf_token", secrets.token_urlsafe(32))
+    session.clear()
+    session["csrf_token"] = csrf_token
+    if uid is not None:
+        record_audit(current_app, action="logout", user_id=uid, tenant_id=tid)
+    return redirect(url_for("auth.login"))
+
+
+# ── admin user management ────────────────────────────────────────────────────
+
+from ..auth.rbac import require_role  # noqa: E402 - after bp defined
+
+
+@bp.get("/admin/users")
+@require_role("admin")
+def admin_users():
+    with session_scope(current_app) as s:
+        rows = (
+            s.query(User)
+            .filter(User.tenant_id == g.tenant_id)
+            .order_by(User.email)
+            .all()
+        )
+        # Detach a plain view for the template (session closes on scope exit).
+        view = [
+            {
+                "id": u.id, "email": u.email, "role": u.role,
+                "is_active": u.is_active, "display_name": u.display_name,
+                "last_login_at": u.last_login_at,
+            }
+            for u in rows
+        ]
+    return render_template(
+        "admin_users.html", users=view, roles=[r.name for r in Role],
+        csrf_token=session.get("csrf_token", ""),
+    )
+
+
+@bp.post("/admin/users")
+@require_role("admin")
+def admin_users_post():
+    validate_csrf()
+    action = (request.form.get("action") or "").strip()
+    if action == "create":
+        return _admin_create_user()
+    if action == "deactivate":
+        return _admin_deactivate_user()
+    flash("Unknown action.", "error")
+    return redirect(url_for("auth.admin_users"))
+
+
+def _admin_create_user():
+    email = (request.form.get("email") or "").strip()
+    password = request.form.get("password") or ""
+    role = (request.form.get("role") or "").strip()
+    if not email or not password or not role:
+        flash("Email, password and role are required.", "error")
+        return redirect(url_for("auth.admin_users"))
+    try:
+        Role.coerce(role)
+    except (KeyError, ValueError):
+        flash("Invalid role.", "error")
+        return redirect(url_for("auth.admin_users"))
+
+    with session_scope(current_app) as s:
+        if users_mod.get_by_email(s, email) is not None:
+            flash("A user with that email already exists.", "error")
+            return redirect(url_for("auth.admin_users"))
+        created = users_mod.create_user(
+            s, tenant_id=g.tenant_id, email=email, password=password, role=role
+        )
+        new_id = created.id
+    record_audit(current_app, action="user_create", user_id=g.user_id,
+                 tenant_id=g.tenant_id,
+                 detail={"created_user_id": new_id, "email": email.lower(),
+                         "role": role})
+    flash(f"Created user {email}.", "success")
+    return redirect(url_for("auth.admin_users"))
+
+
+def _admin_deactivate_user():
+    raw_id = (request.form.get("user_id") or "").strip()
+    try:
+        target_id = int(raw_id)
+    except ValueError:
+        flash("Invalid user id.", "error")
+        return redirect(url_for("auth.admin_users"))
+
+    with session_scope(current_app) as s:
+        target = s.query(User).filter(
+            User.id == target_id, User.tenant_id == g.tenant_id
+        ).one_or_none()
+        if target is None:
+            flash("User not found.", "error")
+            return redirect(url_for("auth.admin_users"))
+        target.is_active = False
+        s.add(target)
+    record_audit(current_app, action="user_deactivate", user_id=g.user_id,
+                 tenant_id=g.tenant_id, detail={"target_user_id": target_id})
+    flash("User deactivated.", "success")
+    return redirect(url_for("auth.admin_users"))
+
+
+def seed_identity(app) -> None:
+    """Startup seed: ensure a default Tenant + break-glass admin exist.
+
+    Idempotent. Called from create_app after init_db. Surfaces a generated
+    break-glass password once (WARNING log) when none was configured.
+    """
+    with session_scope(app) as s:
+        tenant = s.query(Tenant).filter_by(name="default").one_or_none()
+        if tenant is None:
+            tenant = Tenant(name="default")
+            s.add(tenant)
+            s.flush()
+        tenant_id = tenant.id
+        admin, generated = users_mod.bootstrap_admin(
+            s, tenant_id=tenant_id,
+            password=app.config.get("RUCKUS_ADMIN_PASSWORD") or None,
+        )
+    if generated:
+        # One-time surfacing of the break-glass password (never persisted plain).
+        LOG.warning(
+            "BREAK-GLASS ADMIN CREATED — username 'admin', one-time password: %s "
+            "(set RUCKUS_ADMIN_PASSWORD to control this; store it now, it will "
+            "not be shown again).",
+            generated,
+        )
