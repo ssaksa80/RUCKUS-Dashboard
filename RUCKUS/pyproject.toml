@@ -21,6 +21,10 @@ ruckus-dashboard = "ruckus_dashboard.cli:main"
 
 [project.optional-dependencies]
 test = ["pytest>=7", "responses>=0.24", "pytest-cov>=4"]
+# Opt-in production WSGI server for the reverse-proxy path (nginx terminates
+# TLS; waitress serves plain HTTP). The default standalone path uses Werkzeug
+# with a self-signed cert and needs no extra deps.
+server = ["waitress>=3"]
 
 [tool.setuptools.packages.find]
 where = ["."]

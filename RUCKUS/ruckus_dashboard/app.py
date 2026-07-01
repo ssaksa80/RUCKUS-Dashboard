@@ -1,11 +1,13 @@
 """Flask app factory. Routes registered by their own files."""
 from __future__ import annotations
 import logging
+import os
 import secrets
 import uuid
+from pathlib import Path
 from typing import Any
 
-from flask import Flask, g, jsonify, session
+from flask import Flask, g, jsonify, request, session
 
 from . import APP_NAME, APP_VERSION
 from .config import build_config, load_secret_key
@@ -18,6 +20,25 @@ from .infra.cache import ModuleResultCache
 from .infra.inflight import InFlightDeduper
 
 LOG = logging.getLogger("ruckus_dashboard")
+
+# Ops probe paths are unauthenticated and must answer even when the app is
+# misconfigured (e.g. no secret key), so before_request skips the session-backed
+# CSRF token for them — touching the session would 500 without a secret key.
+_OPS_PROBE_PATHS = frozenset({"/healthz", "/readyz"})
+
+
+def _instance_writable(instance_path: str) -> bool:
+    """True if we can create + remove a file in the instance dir.
+
+    Readiness depends on the instance dir being writable (secret_key, certs,
+    profiles, notify state all live there). Module-level so tests can patch it.
+    """
+    p = Path(instance_path)
+    p.mkdir(parents=True, exist_ok=True)
+    probe = p / f".readyz-{uuid.uuid4().hex}"
+    probe.write_text("ok", encoding="utf-8")
+    os.remove(probe)
+    return True
 
 
 def create_app(test_config: dict[str, Any] | None = None) -> Flask:
@@ -95,6 +116,10 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.before_request
     def before_request() -> None:
         g.request_id = uuid.uuid4().hex[:8]
+        # Ops probes must not depend on the session (no secret key ⇒ 500); they
+        # are unauthenticated liveness/readiness checks with no CSRF surface.
+        if request.path in _OPS_PROBE_PATHS:
+            return
         session.setdefault("csrf_token", secrets.token_urlsafe(32))
 
     @app.errorhandler(Exception)
@@ -108,6 +133,23 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.get("/healthz")
     def healthz():
+        # Liveness: the process is up and answering. Always 200 — a live-but-
+        # not-ready app must not be killed by an orchestrator's liveness probe.
         return jsonify({"ok": True, "app": APP_NAME, "version": APP_VERSION})
+
+    @app.get("/readyz")
+    def readyz():
+        # Readiness: can we actually serve? Needs a session-signing key AND a
+        # writable instance dir (secrets/certs/profiles/notify state live there).
+        # 503 tells a load balancer to stop routing traffic until we recover.
+        if not app.config.get("SECRET_KEY"):
+            return jsonify({"ready": False, "reason": "SECRET_KEY not set"}), 503
+        try:
+            _instance_writable(app.instance_path)
+        except OSError as exc:
+            return jsonify(
+                {"ready": False, "reason": f"instance dir not writable: {exc}"}
+            ), 503
+        return jsonify({"ready": True, "app": APP_NAME, "version": APP_VERSION}), 200
 
     return app
