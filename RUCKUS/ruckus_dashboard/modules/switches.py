@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import register
-from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
+from ._base import Column, FetcherContext, ModuleSpec, TabSpec
 from ..clients.switchm import (
     _api_version_fallbacks, fetch_switches, switch_manager_post, switch_manager_query,
 )
@@ -214,8 +214,5 @@ register(ModuleSpec(
         Column("Uptime", "uptime"),
         Column("Ports Up", "ports_online", "number"),
         Column("Ports", "ports_total", "number"),
-    ),
-    filters=(
-        Filter("status", "Status", "select"),
     ),
 ))
