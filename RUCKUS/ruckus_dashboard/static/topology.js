@@ -495,6 +495,47 @@ function renderTopology(root, payload) {
   _renderTopoLegend(root, data.legend);
 }
 
+function renderFlow(data, rates) {
+  // Concept D: deterministic left→right layered ribbon diagram. Returns an SVG
+  // string (DOM-free for tests). Band thickness = live rate (flowWidth);
+  // colour = edge status; labels HTML-escaped. Reuses the edgePath Bézier.
+  const nodes = (data && data.nodes) || [];
+  const edges = (data && data.edges) || [];
+  rates = rates || {};
+  if (!nodes.length) return `<svg class="topo-svg"></svg>`;
+  const pos = layoutLayered(nodes, edges);
+  const xs = nodes.map(n => pos[n.id].x), ys = nodes.map(n => pos[n.id].y);
+  const minX = Math.min(...xs) - 120, minY = Math.min(...ys) - 120;
+  const w = (Math.max(...xs) - minX) + 240, h = (Math.max(...ys) - minY) + 240;
+
+  const ribbons = edges.map(e => {
+    const a = pos[e.source], b = pos[e.target];
+    if (!a || !b) return "";
+    const col = TOPO_COLORS[e.status] || TOPO_COLORS.unknown;
+    const sw = flowWidth(e, rates);
+    return `<path class="topo-flow-ribbon" d="${edgePath(a, b)}" ` +
+           `stroke="${col}" stroke-width="${sw}" stroke-opacity=".55"/>`;
+  }).join("");
+
+  const bars = nodes.map(n => {
+    const p = pos[n.id];
+    const col = TOPO_COLORS[n.status] || TOPO_COLORS.unknown;
+    const bw = 150, bh = 30;
+    return `<g class="topo-flow-bar topo-node" data-node="${_esc(n.id)}" ` +
+           `transform="translate(${p.x - bw / 2},${p.y - bh / 2})">` +
+           `<rect width="${bw}" height="${bh}" rx="4" fill="#0d1b2a" stroke="${col}" stroke-width="2"/>` +
+           `<text class="topo-label" x="${bw / 2}" y="${bh / 2 + 4}" text-anchor="middle">${_esc(n.label || n.id)}</text></g>`;
+  }).join("");
+
+  const headers = [["controller", 0], ["zones / groups", 520], ["switches / APs", 1040]]
+    .map(([t, x]) => `<text class="topo-flow-col" x="${x}" y="${minY + 28}" text-anchor="middle">${_esc(t)}</text>`)
+    .join("");
+
+  return `<svg class="topo-svg" viewBox="${minX} ${minY} ${w} ${h}" ` +
+         `preserveAspectRatio="xMidYMid meet"><g data-topo-scene>` +
+         `${ribbons}${bars}${headers}</g></svg>`;
+}
+
 function _renderTopoLegend(root, legend) {
   const el = root.querySelector("[data-topo-legend]");
   if (!el) return;
@@ -788,6 +829,6 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
 // sync with the pure functions exercised by tests/integration/test_topology_node.py.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly, layoutLayered, flowWidth,
+    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly, layoutLayered, flowWidth, renderFlow,
   };
 }

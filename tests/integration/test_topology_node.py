@@ -183,3 +183,39 @@ def test_flow_width_never_nan_on_garbage_rate():
         "console.log(JSON.stringify(isFinite(T.flowWidth(e,{s1:NaN}))));"
     )
     assert got is True
+
+
+def test_render_flow_emits_svg_with_finite_ribbon_widths():
+    snippet = (
+        "const data={nodes:["
+        "{id:'controller',type:'controller',status:'online',label:'Ctrl',meta:{}},"
+        "{id:'g1',type:'group',status:'online',label:'Core',meta:{}},"
+        "{id:'s1',type:'switch',status:'online',label:'SW-1',meta:{}}],"
+        "edges:["
+        "{source:'controller',target:'g1',status:'online',label:''},"
+        "{source:'g1',target:'s1',status:'online',label:'2 MB'}]};"
+        "const svg=T.renderFlow(data,{s1:5e6});"
+        "const widths=[...svg.matchAll(/stroke-width=\"([0-9.]+)\"/g)].map(m=>parseFloat(m[1]));"
+        "console.log(JSON.stringify({"
+        "isSvg:svg.indexOf('<svg')===0,"
+        "hasRibbon:svg.indexOf('topo-flow-ribbon')>=0,"
+        "allFinite:widths.every(isFinite)&&widths.length>0,"
+        "escaped:svg.indexOf('Ctrl')>=0}));"
+    )
+    got = _run(snippet)
+    assert got["isSvg"] is True
+    assert got["hasRibbon"] is True
+    assert got["allFinite"] is True
+    assert got["escaped"] is True
+
+
+def test_render_flow_escapes_node_labels():
+    got = _run(
+        "const data={nodes:[{id:'x',type:'switch',status:'online',"
+        "label:'<script>',meta:{}}],edges:[]};"
+        "const svg=T.renderFlow(data,{});"
+        "console.log(JSON.stringify({"
+        "noRaw:svg.indexOf('<script>')<0, hasEsc:svg.indexOf('&lt;script&gt;')>=0}));"
+    )
+    assert got["noRaw"] is True
+    assert got["hasEsc"] is True
