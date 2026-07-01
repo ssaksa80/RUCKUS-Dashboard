@@ -243,6 +243,26 @@ def test_drill_error_hidden_unless_debug():
         modmod.MODULES[spec_slug] = original
 
 
+def test_module_list_filters_are_resolved_with_server_filter():
+    app = make_app()
+    with app.test_client() as c:
+        r = c.get("/api/modules")
+        assert r.status_code == 200
+        by_slug = {m["slug"]: m for m in r.json["modules"]}
+        aps = by_slug["aps"]
+        # Resolved filters now include server_filter on every entry.
+        assert aps["filters"], "aps should declare resolved filters"
+        for f in aps["filters"]:
+            assert {"key", "label", "kind", "server_filter"} <= set(f.keys())
+        # Every aps column (none suppressed) yields a resolved filter.
+        col_keys = {col["key"] for col in aps["columns"]}
+        filter_keys = {f["key"] for f in aps["filters"]}
+        assert col_keys <= filter_keys, "every aps column should be filterable"
+        # zone pushes down as ZONE_ID (set in Task 7); assert the field exists now.
+        kinds = {f["kind"] for f in aps["filters"]}
+        assert kinds <= {"select", "search", "range"}
+
+
 def test_module_data_partial_when_one_of_two_controllers_fails():
     """With 2 controllers, one OK + one failing → status 'partial', data kept."""
     import dataclasses

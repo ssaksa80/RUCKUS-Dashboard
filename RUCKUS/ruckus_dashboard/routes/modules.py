@@ -47,6 +47,48 @@ def _log_upstream(slug: str, label: str, exc: RuckusClientError) -> None:
                 slug, label, exc.status_code, raw)
 
 
+# Paging params consumed by smartzone_query_body / pagers; not column filters,
+# but must survive the parse so the body builder still sees them.
+_PASSTHROUGH_KEYS = ("page", "limit")
+
+
+def _parse_filters(args, resolved_filters) -> dict:
+    """Build the filter dict threaded into FetcherContext.filters.
+
+    Multi-value selects are kept as lists (fixes request.args.to_dict()
+    last-wins); range filters are packed as {"min","max"}; present
+    server_filter tokens are collected under a reserved ``__server`` key.
+    Unknown query keys are ignored so an unsupported filter never 500s.
+    """
+    out: dict = {}
+    server: dict = {}
+    for f in resolved_filters:
+        if f.kind == "range":
+            lo = args.get(f"{f.key}__min")
+            hi = args.get(f"{f.key}__max")
+            if lo is not None or hi is not None:
+                out[f.key] = {"min": lo, "max": hi}
+        else:
+            values = args.getlist(f.key)
+            if not values:
+                continue
+            out[f.key] = values[0] if len(values) == 1 else values
+        if f.server_filter and f.key in out:
+            value = out[f.key]
+            if isinstance(value, dict):
+                value = value.get("min") or value.get("max")
+            elif isinstance(value, list):
+                value = value[0] if value else None
+            if value:
+                server[f.server_filter] = value
+    for key in _PASSTHROUGH_KEYS:
+        if key in args:
+            out[key] = args.get(key)
+    if server:
+        out["__server"] = server
+    return out
+
+
 @bp.get("/api/modules")
 def list_modules():
     return jsonify({
@@ -56,7 +98,8 @@ def list_modules():
              "requires_capabilities": [list(c) for c in m.requires_capabilities],
              "supports_views": list(m.supports_views),
              "columns": [{"label": c.label, "key": c.key, "kind": c.kind} for c in m.columns],
-             "filters": [{"key": f.key, "label": f.label, "kind": f.kind} for f in m.filters],
+             "filters": [{"key": f.key, "label": f.label, "kind": f.kind,
+                          "server_filter": f.server_filter} for f in m.resolved_filters],
              "drill_tabs": [{"slug": t.slug, "title": t.title} for t in m.drill_tabs],
              "has_drill": m.drill_fetcher is not None}
             for m in all_modules()
@@ -88,7 +131,7 @@ def module_data(slug: str):
         )
         return jsonify(env)
 
-    filters = request.args.to_dict()
+    filters = _parse_filters(request.args, spec.resolved_filters)
     results: list[dict] = []
     errors: list[ControllerError] = []
     for _, conn in pairs:
@@ -137,7 +180,7 @@ def module_drill(slug: str, entity_id: str):
         return jsonify({"error": "Connection expired.", "reauth": True}), 401
 
     gate = CapabilityGate(available=current_app.capability_registry.get_for(conn_ids))
-    filters = request.args.to_dict()
+    filters = _parse_filters(request.args, spec.resolved_filters)
     _, conn = pairs[0]
     ctx = FetcherContext(connection=conn, config=dict(current_app.config),
                          filters=filters, capability_gate=gate,
@@ -172,7 +215,7 @@ def module_drill_tab(slug: str, entity_id: str, tab_slug: str):
         return jsonify({"error": "Connection expired.", "reauth": True}), 401
 
     gate = CapabilityGate(available=current_app.capability_registry.get_for(conn_ids))
-    filters = request.args.to_dict()
+    filters = _parse_filters(request.args, spec.resolved_filters)
     _, conn = pairs[0]
     ctx = FetcherContext(connection=conn, config=dict(current_app.config),
                          filters=filters, capability_gate=gate,

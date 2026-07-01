@@ -1,6 +1,6 @@
 import pytest
 from ruckus_dashboard.modules._base import (
-    ModuleSpec, Column, Filter,
+    ModuleSpec, Column, Filter, resolve_filters, _infer_filter_kind,
 )
 
 def noop_fetcher(ctx): return {"items": []}
@@ -121,3 +121,128 @@ def test_column_defaults_text_kind():
 def test_filter_defaults_select_kind():
     f = Filter("zone", "Zone")
     assert f.kind == "select"
+
+
+def test_column_filter_metadata_defaults():
+    c = Column("Name", "name")
+    assert c.filterable is True
+    assert c.filter_kind is None
+    assert c.server_filter is None
+
+
+def test_column_filter_metadata_overrides():
+    c = Column("Zone", "zone", "text", filter_kind="select", server_filter="ZONE_ID")
+    assert c.filterable is True
+    assert c.filter_kind == "select"
+    assert c.server_filter == "ZONE_ID"
+
+
+def test_column_suppressed_when_not_filterable():
+    c = Column("Raw", "raw", filterable=False)
+    assert c.filterable is False
+
+
+def test_filter_carries_server_filter_default_none():
+    f = Filter("status", "Status", "select")
+    assert f.server_filter is None
+    f2 = Filter("zone", "Zone", "select", server_filter="ZONE_ID")
+    assert f2.server_filter == "ZONE_ID"
+
+
+def test_infer_filter_kind_by_column_kind():
+    assert _infer_filter_kind("status") == "select"
+    assert _infer_filter_kind("text") == "search"
+    assert _infer_filter_kind("link") == "search"
+    assert _infer_filter_kind("number") == "range"
+    assert _infer_filter_kind("bytes") == "range"
+    assert _infer_filter_kind("rate") == "range"
+    assert _infer_filter_kind("uptime") == "range"
+
+
+def test_resolve_filters_derives_one_per_column():
+    cols = (Column("Name", "name"), Column("Status", "status", "status"),
+            Column("Clients", "clients", "number"))
+    out = resolve_filters(cols, ())
+    by_key = {f.key: f for f in out}
+    assert by_key["name"].kind == "search"
+    assert by_key["status"].kind == "select"
+    assert by_key["clients"].kind == "range"
+    assert by_key["name"].label == "Name"
+
+
+def test_resolve_filters_suppresses_non_filterable_and_none():
+    cols = (Column("Name", "name"),
+            Column("Raw", "raw", filterable=False),
+            Column("Blob", "blob", filter_kind="none"))
+    keys = {f.key for f in resolve_filters(cols, ())}
+    assert keys == {"name"}
+
+
+def test_resolve_filters_column_override_wins_over_inference():
+    cols = (Column("Zone", "zone", "text", filter_kind="select", server_filter="ZONE_ID"),)
+    out = resolve_filters(cols, ())
+    assert out[0].kind == "select"          # override beats text→search
+    assert out[0].server_filter == "ZONE_ID"
+
+
+def test_resolve_filters_explicit_override_replaces_derived():
+    cols = (Column("Status", "status", "status"),)
+    overrides = (Filter("status", "Health", "select", server_filter="STATE"),)
+    out = resolve_filters(cols, overrides)
+    assert len(out) == 1
+    assert out[0].label == "Health"          # explicit label wins
+    assert out[0].server_filter == "STATE"
+
+
+def test_resolve_filters_keeps_non_column_explicit_filter():
+    cols = (Column("Name", "name"),)
+    overrides = (Filter("synthetic", "Synthetic", "select"),)
+    out = resolve_filters(cols, overrides)
+    keys = [f.key for f in out]
+    assert keys == ["name", "synthetic"]     # derived first, then appended
+
+
+def test_resolve_filters_no_columns_returns_overrides_only():
+    overrides = (Filter("severity", "Severity", "select"),)
+    out = resolve_filters((), overrides)
+    assert [f.key for f in out] == ["severity"]
+    assert resolve_filters((), ()) == ()
+
+
+def test_module_spec_computes_resolved_filters_from_columns():
+    spec = ModuleSpec(
+        slug="rf", title="RF", group="Wireless", icon="?",
+        poll_seconds=30, fetcher=noop_fetcher, drill_fetcher=None,
+        drill_tabs=(), summary_fn=noop_summary,
+        requires_platforms=("smartzone",), requires_capabilities=(),
+        supports_views=("table",),
+        columns=(Column("Name", "name"), Column("Status", "status", "status")),
+        filters=(),
+    )
+    by_key = {f.key: f for f in spec.resolved_filters}
+    assert by_key["name"].kind == "search"
+    assert by_key["status"].kind == "select"
+
+
+def test_module_spec_resolved_filters_default_empty_without_columns():
+    spec = ModuleSpec(
+        slug="rf2", title="RF2", group="Wireless", icon="?",
+        poll_seconds=30, fetcher=noop_fetcher, drill_fetcher=None,
+        drill_tabs=(), summary_fn=noop_summary,
+        requires_platforms=("smartzone",), requires_capabilities=(),
+        supports_views=("table",),
+    )
+    assert spec.resolved_filters == ()
+
+
+def test_module_spec_resolved_filters_honor_explicit_override():
+    spec = ModuleSpec(
+        slug="rf3", title="RF3", group="Wireless", icon="?",
+        poll_seconds=30, fetcher=noop_fetcher, drill_fetcher=None,
+        drill_tabs=(), summary_fn=noop_summary,
+        requires_platforms=("smartzone",), requires_capabilities=(),
+        supports_views=("table",),
+        columns=(Column("Zone", "zone", "text", server_filter="ZONE_ID"),),
+        filters=(),
+    )
+    assert spec.resolved_filters[0].server_filter == "ZONE_ID"

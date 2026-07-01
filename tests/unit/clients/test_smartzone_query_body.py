@@ -33,3 +33,24 @@ def test_zone_filter_translated():
 
 def test_no_filters_key_when_no_zone():
     assert "filters" not in smartzone_query_body()
+
+
+def test_server_filter_token_maps_into_body():
+    body = smartzone_query_body({"__server": {"ZONE_ID": "z9"}})
+    assert body["filters"] == [{"type": "ZONE_ID", "value": "z9"}]
+
+
+def test_multiple_server_filter_tokens_accumulate():
+    body = smartzone_query_body({"__server": {"ZONE_ID": "z1", "AP_GROUP_ID": "g2"}})
+    assert {"type": "ZONE_ID", "value": "z1"} in body["filters"]
+    assert {"type": "AP_GROUP_ID", "value": "g2"} in body["filters"]
+    assert len(body["filters"]) == 2
+
+
+def test_empty_server_filter_dict_omits_filters():
+    assert "filters" not in smartzone_query_body({"__server": {}})
+
+
+def test_legacy_zone_shortcut_still_works():
+    body = smartzone_query_body({"zone": "z1"})
+    assert body["filters"] == [{"type": "ZONE_ID", "value": "z1"}]

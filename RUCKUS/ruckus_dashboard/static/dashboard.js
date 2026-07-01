@@ -9,6 +9,8 @@ const moduleSpecs = {};
 const activeFilters = {};
 // Cache of the last items fetched per slug, so filter changes re-render locally.
 const lastItems = {};
+// Per-drill-table client filter state, namespaced "<slug>:drill:<sig>".
+const drillFilters = {};
 
 async function loadModuleSpecs() {
   if (Object.keys(moduleSpecs).length) return moduleSpecs;
@@ -181,11 +183,27 @@ function _applyFilters(slug, items) {
   return items.filter(row => {
     for (const [key, val] of Object.entries(f)) {
       if (val === "" || val == null) continue;
+      if (Array.isArray(val) && val.length === 0) continue;
       if (key === "__search") {
         const hay = Object.values(row).map(v => String(v ?? "")).join(" ").toLowerCase();
         if (!hay.includes(String(val).toLowerCase())) return false;
+      } else if (key.startsWith("search:")) {
+        const col = key.slice(7);
+        if (!String(row[col] ?? "").toLowerCase().includes(String(val).toLowerCase())) return false;
+      } else if (key.startsWith("range:")) {
+        const col = key.slice(6);
+        const n = Number(row[col]);
+        const lo = val.min === "" || val.min == null ? null : Number(val.min);
+        const hi = val.max === "" || val.max == null ? null : Number(val.max);
+        if (lo == null && hi == null) continue;
+        if (!isFinite(n)) return false;
+        if (lo != null && n < lo) return false;
+        if (hi != null && n > hi) return false;
+      } else if (Array.isArray(val)) {
+        // multi-select: row passes if its value is one of the selected.
+        if (!val.map(String).includes(String(row[key] ?? ""))) return false;
       } else if (String(row[key] ?? "") !== String(val)) {
-        return false;
+        return false;  // single-select exact match (KPI/poor-AP path)
       }
     }
     return true;
@@ -362,36 +380,81 @@ function renderColumns(root, slug, spec, items) {
   });
 }
 
+function filterSignature(filters, items) {
+  // Signature changes when the filter set or the option universe changes, so
+  // we only rebuild controls (and lose focus/selection) when truly necessary.
+  const parts = filters.map(f => {
+    if (f.kind !== "select") return `${f.key}:${f.kind}`;
+    const opts = Array.from(new Set(items.map(i => i[f.key])
+      .filter(v => v != null && v !== ""))).sort();
+    return `${f.key}:select:${opts.join("|")}`;
+  });
+  return parts.join("~~");
+}
+
 function renderFilters(root, slug, spec, items) {
   const host = root.querySelector("[data-filters]");
   if (!host) return;
   const filters = spec.filters || [];
-  if (!filters.length) { host.innerHTML = ""; return; }
-  if (host.dataset.built === slug) return;  // build controls once per module page
+  if (!filters.length) { host.innerHTML = ""; host.dataset.sig = ""; return; }
 
+  const sig = filterSignature(filters, items);
+  if (host.dataset.sig === sig) return;   // options unchanged → keep controls
+  host.dataset.sig = sig;
+
+  const state = activeFilters[slug] || {};
   const parts = filters.map(f => {
     if (f.kind === "search") {
-      return `<input class="filter-control" type="search" placeholder="${_escape(f.label)}…" ` +
-             `data-filter-key="__search">`;
+      const cur = state[`search:${f.key}`] || "";
+      return `<label class="filter-control"><span>${_escape(f.label)}</span>` +
+             `<input type="search" data-filter-key="search:${_escape(f.key)}" ` +
+             `placeholder="${_escape(f.label)}…" value="${_escape(cur)}"></label>`;
     }
-    // Option values come from controller data (SSIDs, zone names) — escape both
-    // the attribute and the display text.
+    if (f.kind === "range") {
+      const r = state[`range:${f.key}`] || {};
+      return `<label class="filter-control"><span>${_escape(f.label)}</span>` +
+             `<input type="number" data-filter-key="range:${_escape(f.key)}" ` +
+             `data-bound="min" placeholder="min" value="${_escape(r.min ?? "")}">` +
+             `<input type="number" data-filter-key="range:${_escape(f.key)}" ` +
+             `data-bound="max" placeholder="max" value="${_escape(r.max ?? "")}"></label>`;
+    }
+    // select — options come from controller data (escape attr + text).
+    const cur = state[f.key];
+    const curArr = Array.isArray(cur) ? cur.map(String) : (cur ? [String(cur)] : []);
     const values = Array.from(new Set(items.map(i => i[f.key]).filter(v => v != null && v !== "")))
-      .sort().map(v => `<option value="${_escape(v)}">${_escape(v)}</option>`).join("");
+      .sort().map(v => {
+        const sel = curArr.includes(String(v)) ? " selected" : "";
+        return `<option value="${_escape(v)}"${sel}>${_escape(v)}</option>`;
+      }).join("");
+    const allSel = curArr.length ? "" : " selected";
     return `<label class="filter-control"><span>${_escape(f.label)}</span>` +
-           `<select data-filter-key="${_escape(f.key)}"><option value="">All</option>${values}</select></label>`;
+           `<select data-filter-key="${_escape(f.key)}"><option value=""${allSel}>All</option>${values}</select></label>`;
   });
+  parts.push(`<button class="filter-clear" data-filter-clear>Clear filters</button>`);
   host.innerHTML = parts.join("");
-  host.dataset.built = slug;
 
   host.querySelectorAll("[data-filter-key]").forEach(ctrl => {
     const handler = () => {
-      activeFilters[slug] = activeFilters[slug] || {};
-      activeFilters[slug][ctrl.dataset.filterKey] = ctrl.value;
+      const store = activeFilters[slug] = activeFilters[slug] || {};
+      const key = ctrl.dataset.filterKey;
+      if (key.startsWith("range:")) {
+        const r = store[key] = store[key] || { min: null, max: null };
+        r[ctrl.dataset.bound] = ctrl.value === "" ? null : ctrl.value;
+      } else {
+        store[key] = ctrl.value;
+      }
       renderData(root, slug, spec, lastItems[slug] || []);
     };
     ctrl.addEventListener("change", handler);
     ctrl.addEventListener("input", handler);
+  });
+
+  const clear = host.querySelector("[data-filter-clear]");
+  if (clear) clear.addEventListener("click", () => {
+    activeFilters[slug] = {};
+    host.dataset.sig = "";                 // force a rebuild with cleared controls
+    renderFilters(root, slug, spec, lastItems[slug] || []);
+    renderData(root, slug, spec, lastItems[slug] || []);
   });
 }
 
@@ -432,8 +495,79 @@ function _kvListHtml(obj) {
   return `<div class="kv-list">${rows}</div>`;
 }
 
+function _columnIsNumeric(rows, col) {
+  // Numeric if every non-empty value parses as a finite number.
+  let saw = false;
+  for (const r of rows) {
+    const v = r ? r[col] : null;
+    if (v === null || v === undefined || v === "") continue;
+    saw = true;
+    if (!isFinite(Number(v))) return false;
+  }
+  return saw;
+}
+
+function _applyDrillFilters(stateKey, rows) {
+  const f = drillFilters[stateKey] || {};
+  return rows.filter(row => {
+    for (const [key, val] of Object.entries(f)) {
+      if (val === "" || val == null) continue;
+      if (key.startsWith("search:")) {
+        const col = key.slice(7);
+        if (!String(row[col] ?? "").toLowerCase().includes(String(val).toLowerCase())) return false;
+      } else if (key.startsWith("range:")) {
+        const col = key.slice(6);
+        const n = Number(row[col]);
+        const lo = val.min === "" || val.min == null ? null : Number(val.min);
+        const hi = val.max === "" || val.max == null ? null : Number(val.max);
+        if (lo == null && hi == null) continue;
+        if (!isFinite(n)) return false;
+        if (lo != null && n < lo) return false;
+        if (hi != null && n > hi) return false;
+      }
+    }
+    return true;
+  });
+}
+
+function renderDrillFilters(container, stateKey, cols, rows, onChange) {
+  const bar = cols.map(col => {
+    const numeric = _columnIsNumeric(rows, col);
+    if (numeric) {
+      return `<label class="filter-control"><span>${_escape(col)}</span>` +
+             `<input type="number" data-drill-filter-key="range:${_escape(col)}" ` +
+             `data-bound="min" placeholder="min">` +
+             `<input type="number" data-drill-filter-key="range:${_escape(col)}" ` +
+             `data-bound="max" placeholder="max"></label>`;
+    }
+    return `<label class="filter-control"><span>${_escape(col)}</span>` +
+           `<input type="search" data-drill-filter-key="search:${_escape(col)}" ` +
+           `placeholder="${_escape(col)}…"></label>`;
+  }).join("");
+  const wrap = document.createElement("div");
+  wrap.className = "filters drill-filters";
+  wrap.innerHTML = bar;
+  container.appendChild(wrap);
+  wrap.querySelectorAll("[data-drill-filter-key]").forEach(ctrl => {
+    const handler = () => {
+      const store = drillFilters[stateKey] = drillFilters[stateKey] || {};
+      const key = ctrl.dataset.drillFilterKey;
+      if (key.startsWith("range:")) {
+        const r = store[key] = store[key] || { min: null, max: null };
+        r[ctrl.dataset.bound] = ctrl.value === "" ? null : ctrl.value;
+      } else {
+        store[key] = ctrl.value;
+      }
+      onChange();
+    };
+    ctrl.addEventListener("change", handler);
+    ctrl.addEventListener("input", handler);
+  });
+}
+
 // Simple table for array-of-objects sections (ports, etc.).
-function renderGenericTable(container, rows) {
+// When stateKey is provided, prepend per-column filter controls (client-side).
+function renderGenericTable(container, rows, stateKey) {
   if (!Array.isArray(rows) || rows.length === 0) {
     container.innerHTML = `<p class="empty">No data.</p>`;
     return;
@@ -442,15 +576,30 @@ function renderGenericTable(container, rows) {
     Object.keys(r || {}).forEach(k => set.add(k));
     return set;
   }, new Set()));
-  const head = cols.map(c => `<th>${_escape(c)}</th>`).join("");
-  const body = rows.slice(0, 500).map(r =>
-    `<tr>${cols.map(c => {
-      let v = r[c];
-      if (v && typeof v === "object") v = JSON.stringify(v);
-      return `<td>${_escape(v ?? "—")}</td>`;
-    }).join("")}</tr>`).join("");
-  container.innerHTML =
-    `<table class="data-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+
+  const draw = () => {
+    const shown = stateKey ? _applyDrillFilters(stateKey, rows) : rows;
+    const head = cols.map(c => `<th>${_escape(c)}</th>`).join("");
+    const body = shown.slice(0, 500).map(r =>
+      `<tr>${cols.map(c => {
+        let v = r[c];
+        if (v && typeof v === "object") v = JSON.stringify(v);
+        return `<td>${_escape(v ?? "—")}</td>`;
+      }).join("")}</tr>`).join("");
+    let tbl = table.querySelector("tbody");
+    if (tbl) {
+      tbl.innerHTML = body;
+    } else {
+      table.innerHTML =
+        `<table class="data-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    }
+  };
+
+  container.innerHTML = "";
+  const table = document.createElement("div");
+  if (stateKey) renderDrillFilters(container, stateKey, cols, rows, draw);
+  container.appendChild(table);
+  draw();
 }
 
 // Render one tab's section payload into the drill body.
@@ -491,7 +640,7 @@ function _renderDrillSection(body, slug, tabSlug, payload) {
     }
   }
   if (Array.isArray(section)) {
-    renderGenericTable(body, section);
+    renderGenericTable(body, section, `${slug}:drill:${tabSlug}`);
   } else if (section && typeof section === "object" && Object.keys(section).length) {
     renderKeyVals(body, section);
   } else {

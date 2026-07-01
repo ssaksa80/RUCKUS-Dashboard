@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import register
-from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
+from ._base import Column, FetcherContext, ModuleSpec, TabSpec
 from ..clients.switchm import fetch_switches
 
 POLL_SECONDS = 30
@@ -84,14 +84,11 @@ register(ModuleSpec(
     columns=(
         Column("Switch", "switch"),
         Column("IP", "ip"),
-        Column("Model", "model"),
+        Column("Model", "model", filter_kind="select"),
         Column("Ports", "ports_total", "number"),
         Column("Up", "ports_up", "number"),
         Column("Down", "ports_down", "number"),
         Column("Warning", "ports_warning", "number"),
         Column("PoE %", "poe_pct", "number"),
-    ),
-    filters=(
-        Filter("model", "Model", "select"),
     ),
 ))

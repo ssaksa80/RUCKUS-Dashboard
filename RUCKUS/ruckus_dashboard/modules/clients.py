@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 from . import register
-from ._base import Column, Filter, FetcherContext, ModuleSpec, TabSpec
+from ._base import Column, FetcherContext, ModuleSpec, TabSpec
 from ..clients.smartzone import smartzone_query_paged
 
 POLL_SECONDS = 20
@@ -193,23 +193,15 @@ register(ModuleSpec(
         Column("MAC", "mac"),
         Column("IP", "ip"),
         Column("User", "user"),
-        Column("SSID", "ssid"),
-        Column("AP", "ap"),
-        Column("Site", "site"),
-        Column("Band", "band"),
+        Column("SSID", "ssid", filter_kind="select"),
+        Column("AP", "ap", filter_kind="select"),
+        Column("Site", "site", filter_kind="select"),
+        Column("Band", "band", filter_kind="select"),
         Column("Ch", "channel", "number"),
         Column("VLAN", "vlan", "number"),
-        Column("Quality", "quality", "status"),
+        Column("Quality", "quality", "status", filter_kind="select"),
         Column("RX", "rx_bytes", "bytes"),
         Column("TX", "tx_bytes", "bytes"),
-        Column("OS", "os"),
-    ),
-    filters=(
-        Filter("ssid", "SSID", "select"),
-        Filter("os", "OS", "select"),
-        Filter("band", "Band", "select"),
-        Filter("quality", "Quality", "select"),
-        Filter("ap", "AP", "select"),
-        Filter("site", "Site", "select"),
+        Column("OS", "os", filter_kind="select"),
     ),
 ))
