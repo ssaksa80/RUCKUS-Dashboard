@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Any
 
 VALID_GROUPS = {"Wireless", "Switching", "Cross-cutting"}
-VALID_VIEWS = {"table", "grid", "heatmap", "chart", "tree", "graph"}
+VALID_VIEWS = {"table", "grid", "heatmap", "chart", "tree", "graph", "flow"}
 VALID_PLATFORMS = {"smartzone", "ruckus_one"}
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 

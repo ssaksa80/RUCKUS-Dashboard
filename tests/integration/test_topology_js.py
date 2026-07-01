@@ -40,3 +40,53 @@ def test_topology_js_live_rates_and_ap_signal():
     js = pathlib.Path("RUCKUS/ruckus_dashboard/static/topology.js").read_text(encoding="utf-8")
     for sym in ["updateRates", "fmtRate", "prevTraffic", "rssi_avg", "live rate"]:
         assert sym in js, f"missing {sym}"
+
+
+def test_topology_js_has_node_export():
+    js = pathlib.Path("RUCKUS/ruckus_dashboard/static/topology.js").read_text(encoding="utf-8")
+    assert 'typeof module !== "undefined"' in js
+    assert 'typeof document !== "undefined"' in js
+    assert "module.exports" in js
+
+
+def test_topology_css_has_glow_and_reduced_motion():
+    css = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css").read_text(encoding="utf-8")
+    for rule in [".topo-node.glow", "--glow", "prefers-reduced-motion"]:
+        assert rule in css, f"missing {rule}"
+
+
+def test_topology_template_has_ribbon_and_problems_toggle():
+    html = pathlib.Path("RUCKUS/ruckus_dashboard/templates/topology.html").read_text(encoding="utf-8")
+    for hook in ["data-topo-ribbon", "data-topo-problems"]:
+        assert hook in html, f"missing {hook}"
+
+
+def test_topology_css_has_ribbon():
+    css = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css").read_text(encoding="utf-8")
+    for rule in [".topo-ribbon", ".rib-offline"]:
+        assert rule in css, f"missing {rule}"
+
+
+def test_topology_js_has_problems_filter():
+    js = pathlib.Path("RUCKUS/ruckus_dashboard/static/topology.js").read_text(encoding="utf-8")
+    for sym in ["filterProblemsOnly", "problemsOnly", "data-topo-problems"]:
+        assert sym in js, f"missing {sym}"
+
+
+def test_topology_css_has_flow_styles():
+    css = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css").read_text(encoding="utf-8")
+    for rule in [".topo-flow-ribbon", ".topo-flow-col"]:
+        assert rule in css, f"missing {rule}"
+
+
+def test_topology_template_has_view_toggle():
+    html = pathlib.Path("RUCKUS/ruckus_dashboard/templates/topology.html").read_text(encoding="utf-8")
+    assert "data-topo-view" in html
+    assert 'data-view="graph"' in html
+    assert 'data-view="flow"' in html
+
+
+def test_topology_js_has_set_view_and_flow_dispatch():
+    js = pathlib.Path("RUCKUS/ruckus_dashboard/static/topology.js").read_text(encoding="utf-8")
+    for sym in ["setView", "renderFlow", 'topoState.view', "data-topo-view"]:
+        assert sym in js, f"missing {sym}"

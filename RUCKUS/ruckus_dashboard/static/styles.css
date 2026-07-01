@@ -203,6 +203,33 @@ body.dso-mode .health-bar{display:none}
 /* Topology v3: collapsed groups show a dashed ring */
 .topo-node.collapsed > circle{stroke-dasharray:6 4}
 
+/* ── SP4 health-glow: severity-driven node glow (drop-shadow strength via --glow) ── */
+.topo-node.glow > circle{
+  filter:drop-shadow(0 0 calc(2px + var(--glow,0) * 22px) rgba(231,76,60,calc(var(--glow,0) * .9)));
+}
+/* Calm field: near-zero glow = no shadow, so healthy nodes recede. */
+.topo-node.glow{transition:filter .4s ease}
+@media (prefers-reduced-motion: reduce){
+  .topo-node.pulse > circle{animation:none;stroke-opacity:1}
+}
+
+/* ── SP4 status ribbon: glanceable fleet counts above the canvas ── */
+.topo-ribbon{display:flex;gap:1.25rem;align-items:center;padding:.4rem .6rem;margin-bottom:.4rem;
+  background:#0d1b2a;border:1px solid #1b263b;border-radius:8px;font-size:.95rem;color:#c7d3e0}
+.topo-ribbon .rib-item b{font-size:1.35rem;margin-right:.3rem}
+.topo-ribbon .rib-online b{color:#2ecc71}
+.topo-ribbon .rib-flagged b{color:#f1c40f}
+.topo-ribbon .rib-offline b{color:#e74c3c}
+.topo-ribbon .rib-alarms b{color:#ff7b54}
+body.dso-mode .topo-ribbon{font-size:1.3rem}
+body.dso-mode .topo-ribbon .rib-item b{font-size:2rem}
+.topo-controls button[aria-pressed="true"]{background:#1f3a5f;border-color:#4cc9f0;color:#fff}
+
+/* ── SP4 traffic-flow (Sankey-style) view ── */
+.topo-flow-ribbon{fill:none;stroke-linecap:round;mix-blend-mode:screen}
+.topo-flow-col{fill:#c7d3e0;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;opacity:.6}
+.topo-flow-bar > rect{rx:4}
+
 /* ── Drill pages: hero, tabs, key/value grid ──────────────────────────── */
 .drill-hero{background:var(--surface);border:1px solid var(--border);border-radius:8px;
   padding:16px 18px;margin-bottom:10px}

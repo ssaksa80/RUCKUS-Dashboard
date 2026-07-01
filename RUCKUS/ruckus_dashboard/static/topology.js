@@ -16,6 +16,8 @@ const topoState = {
   prevTraffic: {},        // {switchId: {bytes, t}} for live-rate deltas
   rates: {},              // {switchId: bps} — real-time throughput
   legend: null, root: null,
+  problemsOnly: false,    // "Problems only" filter active
+  view: "graph",          // active view: "graph" (health wall) | "flow"
   vb: null, box: null,    // viewBox state
 };
 
@@ -71,6 +73,54 @@ function nodeRadius(n) {
     return 16 + Math.min(14, total / 40);
   }
   return NODE_R[n.type] || 16;
+}
+
+const SEVERITY_BASE = { offline: 0.7, flagged: 0.45, online: 0.18, unknown: 0.05 };
+
+function healthWeight(n) {
+  // Severity scalar in [0,1] driving health-glow size/glow. Monotonic in
+  // status (offline > flagged > online > unknown); within a status, grows
+  // with the fraction of down APs and with active alarm count. Never NaN.
+  const base = SEVERITY_BASE[n.status] != null ? SEVERITY_BASE[n.status] : SEVERITY_BASE.unknown;
+  const meta = n.meta || {};
+  const total = Number(meta.ap_total) || 0;
+  const down = Number(meta.ap_down) || 0;
+  const downFrac = total > 0 ? down / total : 0;
+  const alarms = Number(meta.alarm_count) || 0;
+  const alarmBoost = Math.min(0.2, alarms * 0.05);
+  const w = base + downFrac * 0.25 + alarmBoost;
+  return Math.max(0, Math.min(1, w));
+}
+
+function nodeGlowStyle(n) {
+  // Inline style string for a node <g>: exposes the severity-driven glow
+  // strength as the CSS var --glow (0..1), consumed by .topo-node.glow.
+  const w = healthWeight(n);
+  return `--glow:${w.toFixed(3)}`;
+}
+
+function ribbonCounts(nodes) {
+  // Live fleet tally for the status ribbon. Alarms summed across all nodes.
+  const c = { online: 0, flagged: 0, offline: 0, alarms: 0, total: nodes.length };
+  nodes.forEach(n => {
+    if (n.status === "online") c.online += 1;
+    else if (n.status === "flagged") c.flagged += 1;
+    else if (n.status === "offline") c.offline += 1;
+    c.alarms += (n.meta && Number(n.meta.alarm_count)) || 0;
+  });
+  return c;
+}
+
+function updateStatusRibbon(root, nodes) {
+  const el = root.querySelector("[data-topo-ribbon]");
+  if (!el) return;
+  const c = ribbonCounts(nodes);
+  el.innerHTML =
+    `<span class="rib-item rib-online"><b>${c.online}</b> online</span>` +
+    `<span class="rib-item rib-flagged"><b>${c.flagged}</b> flagged</span>` +
+    `<span class="rib-item rib-offline"><b>${c.offline}</b> offline</span>` +
+    `<span class="rib-item rib-alarms"><b>${c.alarms}</b> alarms</span>` +
+    `<span class="rib-item rib-total"><b>${c.total}</b> nodes</span>`;
 }
 
 function layoutGraph(nodes, edges, saved, pinned) {
@@ -132,6 +182,32 @@ function layoutGraph(nodes, edges, saved, pinned) {
   return pos;
 }
 
+const FLOW_COL_X = { 0: 0, 1: 520, 2: 1040 };
+const FLOW_ROW_GAP = 84;
+
+function flowColumn(type) {
+  if (type === "controller") return 0;
+  if (type === "zone" || type === "group" || type === "stack") return 1;
+  return 2; // switch | ap | more
+}
+
+function layoutLayered(nodes, edges) {
+  // Deterministic left→right layered DAG: column by tier, evenly spaced rows
+  // within a column (centred vertically). Stable ordering = input order, so
+  // identical input yields identical output. All coordinates finite.
+  void edges; // edges drive ribbons in renderFlow, not placement
+  const cols = { 0: [], 1: [], 2: [] };
+  nodes.forEach(n => { cols[flowColumn(n.type)].push(n); });
+  const pos = {};
+  Object.keys(cols).forEach(k => {
+    const list = cols[k];
+    const x = FLOW_COL_X[k];
+    const h = (list.length - 1) * FLOW_ROW_GAP;
+    list.forEach((n, i) => { pos[n.id] = { x, y: i * FLOW_ROW_GAP - h / 2 }; });
+  });
+  return pos;
+}
+
 function refanChildren(parentId, positions, nodes, edges, controllerId) {
   // Re-arrange a dropped parent's children in an arc facing away from the
   // controller at the parent's new position, then push siblings ≥50 apart.
@@ -178,6 +254,25 @@ function visibleGraph(nodes, edges, collapsed) {
   };
 }
 
+function filterProblemsOnly(nodes, edges) {
+  // Keep only nodes on a path to a problem (status not online/unknown), i.e.
+  // every problem node plus all of its ancestors; drop fully-green subtrees
+  // and any edge whose endpoints are not both kept.
+  const parentOf = {};
+  edges.forEach(e => { parentOf[e.target] = e.source; });
+  const keep = new Set();
+  const isProblem = n => n && n.status !== "online" && n.status !== "unknown";
+  nodes.forEach(n => {
+    if (!isProblem(n)) return;
+    let cur = n.id;
+    while (cur && !keep.has(cur)) { keep.add(cur); cur = parentOf[cur]; }
+  });
+  return {
+    nodes: nodes.filter(n => keep.has(n.id)),
+    edges: edges.filter(e => keep.has(e.source) && keep.has(e.target)),
+  };
+}
+
 function animateToPositions(newPos, duration) {
   // Smoothly tween rendered nodes/edges to a new layout (easeOutCubic).
   const svg = topoState.root && topoState.root.querySelector(".topo-svg");
@@ -220,6 +315,14 @@ function rerenderFromState() {
   });
 }
 
+function setView(root, view) {
+  topoState.view = view === "flow" ? "flow" : "graph";
+  const toggle = root.querySelector("[data-topo-view]");
+  if (toggle) toggle.querySelectorAll("button").forEach(b =>
+    b.classList.toggle("active", b.getAttribute("data-view") === topoState.view));
+  rerenderFromState();
+}
+
 function nodeHref(n) {
   if (n.type === "switch") return `/m/switches/${encodeURIComponent(n.id)}`;
   if (n.type === "controller") return "/m/controller";
@@ -240,6 +343,18 @@ function edgeWidth(label, status) {
   if (label.includes("Gbps") || label.includes("TB")) return 5;
   if (label.includes("Mbps") || label.includes("GB")) return 3.5;
   return 2;
+}
+
+const FLOW_MIN_W = 2;
+const FLOW_MAX_W = 28;
+
+function flowWidth(edge, rates) {
+  // Map a link's live rate (bps) to a finite ribbon width. No/blank rate →
+  // thin floor (the "measuring…" state). Log scale so Kbps..Gbps all read.
+  const bps = Number((rates || {})[edge.target]);
+  if (!isFinite(bps) || bps <= 0) return FLOW_MIN_W;
+  const w = FLOW_MIN_W + Math.log10(1 + bps) * 2.6;
+  return Math.max(FLOW_MIN_W, Math.min(FLOW_MAX_W, w));
 }
 
 function diffAndToast(prev, nodes) {
@@ -319,12 +434,22 @@ function renderTopology(root, payload) {
     [n.id, { status: n.status, alarms: (n.meta && n.meta.alarm_count) || 0 }]));
   topoState.nodes = nodes; topoState.edges = edges;
   topoState.legend = data.legend; topoState.root = root;
+  updateStatusRibbon(root, nodes);
 
   // Collapse filter: full graph stays in state (toast diffing above), only
   // visible nodes are laid out and drawn.
   updateRates(nodes);
-  const vis = visibleGraph(nodes, edges, topoState.collapsed);
+  let vis = visibleGraph(nodes, edges, topoState.collapsed);
+  if (topoState.problemsOnly) vis = filterProblemsOnly(vis.nodes, vis.edges);
+  if (!vis.nodes.length) { canvas.innerHTML = `<p class="empty">No problems — all healthy.</p>`; updateStatusRibbon(root, nodes); return; }
   topoState.visEdges = vis.edges;
+  if (topoState.view === "flow") {
+    const flowRates = (data.flow && Object.keys(data.flow).length) ? data.flow : topoState.rates;
+    canvas.innerHTML = renderFlow({ nodes: vis.nodes, edges: vis.edges }, flowRates);
+    _wireTopo(root, canvas.querySelector("svg"));
+    _renderTopoLegend(root, data.legend);
+    return;
+  }
   topoState.positions = layoutGraph(vis.nodes, vis.edges, topoState.saved, topoState.pinned);
   const pos = topoState.positions;
 
@@ -360,7 +485,7 @@ function renderTopology(root, payload) {
     const p = pos[n.id]; if (!p) return "";
     const col = TOPO_COLORS[n.status] || TOPO_COLORS.unknown;
     const g = TOPO_GLYPH[n.type] || "•";
-    const r = nodeRadius(n);
+    const r = nodeRadius(n) + Math.round(healthWeight(n) * 10);
     const alarms = (n.meta && n.meta.alarm_count) || 0;
     const pulse = (n.status === "offline" || alarms > 0 ? " pulse" : "") +
                   (topoState.collapsed.has(n.id) ? " collapsed" : "");
@@ -369,7 +494,7 @@ function renderTopology(root, payload) {
       ? `<circle class="topo-badge" cx="${r - 4}" cy="${-(r - 4)}" r="9"/>` +
         `<text class="topo-badge-text" x="${r - 4}" y="${-(r - 8)}" text-anchor="middle">${alarms > 9 ? "9+" : alarms}</text>`
       : "";
-    return `<g class="topo-node${pulse}" data-node="${_esc(n.id)}" transform="translate(${p.x},${p.y})">` +
+    return `<g class="topo-node glow${pulse}" data-node="${_esc(n.id)}" style="${nodeGlowStyle(n)}" transform="translate(${p.x},${p.y})">` +
            `<circle r="${r}" fill="#0d1b2a" stroke="${col}" stroke-width="3"/>` +
            `<text class="glyph" text-anchor="middle" dy="6" font-size="${Math.max(12, r - 6)}">${g}</text>` +
            badge +
@@ -381,6 +506,67 @@ function renderTopology(root, payload) {
     `preserveAspectRatio="xMidYMid meet"><g data-topo-scene>${edgeSvg}${nodeSvg}</g></svg>`;
   _wireTopo(root, canvas.querySelector("svg"));
   _renderTopoLegend(root, data.legend);
+}
+
+function flowBox(nodes, edges) {
+  // Content bounding box for the flow diagram, in flow coordinates. Same
+  // {minX,minY,w,h} shape the graph path produces, so _wireTopo/vbApply can
+  // pan/zoom the flow <svg> on its OWN coordinates. Pure + deterministic:
+  // identical input → identical box (no DOM, no state). Empty → a unit box.
+  nodes = nodes || [];
+  if (!nodes.length) return { minX: 0, minY: 0, w: 1, h: 1 };
+  const pos = layoutLayered(nodes, edges || []);
+  const xs = nodes.map(n => pos[n.id].x), ys = nodes.map(n => pos[n.id].y);
+  const minX = Math.min(...xs) - 120, minY = Math.min(...ys) - 120;
+  const w = (Math.max(...xs) - minX) + 240, h = (Math.max(...ys) - minY) + 240;
+  return { minX, minY, w, h };
+}
+
+function renderFlow(data, rates) {
+  // Concept D: deterministic left→right layered ribbon diagram. Returns an SVG
+  // string (DOM-free for tests). Band thickness = live rate (flowWidth);
+  // colour = edge status; labels HTML-escaped. Reuses the edgePath Bézier.
+  const nodes = (data && data.nodes) || [];
+  const edges = (data && data.edges) || [];
+  rates = rates || {};
+  if (!nodes.length) return `<svg class="topo-svg"></svg>`;
+  const pos = layoutLayered(nodes, edges);
+  // Sync pan/zoom state to THIS view's coordinates. The graph path sets
+  // box/vb from its own extents; flow must too, else the first scroll-zoom or
+  // background-pan after a Graph→Flow toggle applies the graph's leftover
+  // viewBox onto the flow <svg>. Reset vb each render so toggling either way
+  // re-homes the active view.
+  const box = flowBox(nodes, edges);
+  topoState.box = box;
+  topoState.vb = { ...box };
+  const { minX, minY, w, h } = box;
+
+  const ribbons = edges.map(e => {
+    const a = pos[e.source], b = pos[e.target];
+    if (!a || !b) return "";
+    const col = TOPO_COLORS[e.status] || TOPO_COLORS.unknown;
+    const sw = flowWidth(e, rates);
+    return `<path class="topo-flow-ribbon" d="${edgePath(a, b)}" ` +
+           `stroke="${col}" stroke-width="${sw}" stroke-opacity=".55"/>`;
+  }).join("");
+
+  const bars = nodes.map(n => {
+    const p = pos[n.id];
+    const col = TOPO_COLORS[n.status] || TOPO_COLORS.unknown;
+    const bw = 150, bh = 30;
+    return `<g class="topo-flow-bar topo-node" data-node="${_esc(n.id)}" ` +
+           `transform="translate(${p.x - bw / 2},${p.y - bh / 2})">` +
+           `<rect width="${bw}" height="${bh}" rx="4" fill="#0d1b2a" stroke="${col}" stroke-width="2"/>` +
+           `<text class="topo-label" x="${bw / 2}" y="${bh / 2 + 4}" text-anchor="middle">${_esc(n.label || n.id)}</text></g>`;
+  }).join("");
+
+  const headers = [["controller", 0], ["zones / groups", 1], ["switches / APs", 2]]
+    .map(([t, col]) => `<text class="topo-flow-col" x="${FLOW_COL_X[col]}" y="${minY + 28}" text-anchor="middle">${_esc(t)}</text>`)
+    .join("");
+
+  return `<svg class="topo-svg" viewBox="${minX} ${minY} ${w} ${h}" ` +
+         `preserveAspectRatio="xMidYMid meet"><g data-topo-scene>` +
+         `${ribbons}${bars}${headers}</g></svg>`;
 }
 
 function _renderTopoLegend(root, legend) {
@@ -608,6 +794,17 @@ function wireToolbar(root) {
     animateToPositions(freshLayout());
   });
 
+  const problems = root.querySelector("[data-topo-problems]");
+  if (problems) problems.addEventListener("click", () => {
+    topoState.problemsOnly = !topoState.problemsOnly;
+    problems.setAttribute("aria-pressed", String(topoState.problemsOnly));
+    rerenderFromState();
+  });
+
+  const viewToggle = root.querySelector("[data-topo-view]");
+  if (viewToggle) viewToggle.querySelectorAll("button").forEach(b =>
+    b.addEventListener("click", () => setView(root, b.getAttribute("data-view"))));
+
   const exportBtn = root.querySelector("[data-topo-export]");
   if (exportBtn) exportBtn.addEventListener("click", () => {
     try {
@@ -653,7 +850,7 @@ function loadTopology(root) {
     .catch(() => {});
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded", () => {
   const root = document.querySelector("[data-topology]");
   if (!root) return;
   wireToolbar(root);
@@ -664,3 +861,11 @@ document.addEventListener("DOMContentLoaded", () => {
     .finally(() => loadTopology(root));
   setInterval(() => { if (!document.hidden) loadTopology(root); }, 60000);
 });
+
+// Node-only export for unit tests (no-op in the browser). Keep this list in
+// sync with the pure functions exercised by tests/integration/test_topology_node.py.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly, layoutLayered, flowWidth, flowBox, renderFlow, setView,
+  };
+}
