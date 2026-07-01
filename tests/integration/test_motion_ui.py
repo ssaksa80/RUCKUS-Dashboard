@@ -1,5 +1,7 @@
 import pathlib
 
+from ruckus_dashboard.app import create_app
+
 CSS = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css")
 
 
@@ -121,3 +123,34 @@ def test_warmup_width_transition_preserved():
     # the guard targets the sheen pseudo-element, never the base .warmup-fill width
     assert ".warmup-fill::after" in guard
     assert ".warmup-fill {" not in guard
+
+
+def test_motion_js_served_with_js_content_type():
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        r = c.get("/static/motion.js")
+        assert r.status_code == 200
+        assert "javascript" in r.headers["Content-Type"].lower()
+
+
+def test_motion_js_public_api_symbols():
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/motion.js").data.decode()
+        for sym in ["function animateCount", "function pulse",
+                    "function motionReduced", "window.RuckusMotion"]:
+            assert sym in body, f"missing {sym}"
+
+
+def test_motion_js_is_leak_safe_and_reduced_motion_aware():
+    """Single cancellable rAF per node; snaps under hidden/reduced; no setInterval."""
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/motion.js").data.decode()
+        assert "requestAnimationFrame" in body
+        assert "cancelAnimationFrame" in body
+        assert "document.hidden" in body
+        assert "prefers-reduced-motion" in body
+        assert "matchMedia" in body
+        # leak rule: no interval timers introduced by the motion layer
+        assert "setInterval" not in body
