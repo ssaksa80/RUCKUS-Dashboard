@@ -1,4 +1,6 @@
 """Unit tests for the generic report collector (reports/collect.py)."""
+import dataclasses
+
 from ruckus_dashboard.clients.base import RuckusClientError
 from ruckus_dashboard.infra.capability_gate import CapabilityGate
 from ruckus_dashboard.modules._base import (
@@ -219,3 +221,110 @@ def test_collect_module_drill_sample_and_error_capture():
     bad = next(d for d in rep.drill_samples if d.entity_id == "b")
     assert ok.sections["identity"]["id"] == "a" and ok.error is None
     assert bad.error and "drill blew up" in bad.error
+
+
+def test_collect_report_model_covers_every_registered_module(monkeypatch):
+    """SP3 invariant: every slug in all_modules() yields a ModuleReport."""
+    import ruckus_dashboard.modules as modmod
+    from ruckus_dashboard.reports.collect import collect_report_model
+
+    # Replace every fetcher/drill with a cheap stub so no HTTP happens.
+    originals = dict(modmod.MODULES)
+    try:
+        for slug, spec in list(modmod.MODULES.items()):
+            modmod.MODULES[slug] = dataclasses.replace(
+                spec,
+                fetcher=lambda ctx, s=slug: {"items": [{"id": f"{s}-1"}],
+                                             "raw_count": 1},
+                drill_fetcher=None,
+                requires_capabilities=(),     # all enabled for this test
+            )
+        model = collect_report_model(
+            object(), {}, available_ops=set(), per_module_timeout=5.0)
+        got = {m.slug for m in model.modules}
+        want = {s.slug for s in modmod.all_modules()}
+        assert got == want
+        assert all(m.status in ("ok", "disabled", "error") for m in model.modules)
+        # Order matches all_modules() (group, title).
+        assert [m.slug for m in model.modules] == [s.slug for s in modmod.all_modules()]
+    finally:
+        modmod.MODULES.clear()
+        modmod.MODULES.update(originals)
+
+
+def test_collect_report_model_disabled_module_not_fetched(monkeypatch):
+    import ruckus_dashboard.modules as modmod
+    from ruckus_dashboard.reports.collect import collect_report_model
+    calls = {"n": 0}
+
+    def fetcher(ctx):
+        calls["n"] += 1
+        return {"items": []}
+
+    original = modmod.MODULES["aps"]
+    modmod.MODULES["aps"] = dataclasses.replace(
+        original, fetcher=fetcher, requires_capabilities=(("POST", "/query/ap"),))
+    try:
+        model = collect_report_model(object(), {}, available_ops=set(),
+                                     slugs=("aps",))
+        rep = model.by_slug("aps")
+        assert rep.status == "disabled"
+        assert calls["n"] == 0
+    finally:
+        modmod.MODULES["aps"] = original
+
+
+def test_collect_report_model_slow_module_times_out(monkeypatch):
+    import time as _t
+    import ruckus_dashboard.modules as modmod
+    from ruckus_dashboard.reports.collect import collect_report_model
+
+    def slow(ctx):
+        _t.sleep(2.0)
+        return {"items": []}
+
+    original = modmod.MODULES["aps"]
+    modmod.MODULES["aps"] = dataclasses.replace(
+        original, fetcher=slow, requires_capabilities=())
+    try:
+        model = collect_report_model(object(), {}, available_ops=set(),
+                                     slugs=("aps",), per_module_timeout=0.2)
+        rep = model.by_slug("aps")
+        assert rep.status == "error"
+        assert rep.note and "timed out" in rep.note.lower()
+    finally:
+        modmod.MODULES["aps"] = original
+
+
+def test_collect_report_model_forwards_filters_per_slug():
+    import ruckus_dashboard.modules as modmod
+    from ruckus_dashboard.reports.collect import collect_report_model
+
+    original = modmod.MODULES["clients"]
+    modmod.MODULES["clients"] = dataclasses.replace(
+        original,
+        fetcher=lambda ctx: {"items": [
+            {"id": "a", "band": "5 GHz"}, {"id": "b", "band": "2.4 GHz"}]},
+        drill_fetcher=None, requires_capabilities=())
+    try:
+        model = collect_report_model(
+            object(), {}, available_ops=set(), slugs=("clients",),
+            filters_by_slug={"clients": {"band": "5 GHz"}})
+        rep = model.by_slug("clients")
+        assert [r["id"] for r in rep.rows] == ["a"]
+        assert rep.filters_applied == {"band": "5 GHz"}
+    finally:
+        modmod.MODULES["clients"] = original
+
+
+def test_collect_report_model_metadata_fields():
+    from ruckus_dashboard.reports.collect import collect_report_model
+
+    class Conn:
+        display_name = "SZ-PROD"
+
+    model = collect_report_model(Conn(), {}, available_ops=set(),
+                                 slugs=())
+    assert model.connection_label == "SZ-PROD"
+    assert model.generated_at        # ISO-ish timestamp string
+    assert model.modules == []

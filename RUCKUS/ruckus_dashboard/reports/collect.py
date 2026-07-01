@@ -10,10 +10,12 @@ A thin ``collect_report_data`` wrapper preserves the legacy 4-domain dict the
 alert path consumes (``state_from_data``)."""
 from __future__ import annotations
 
+import concurrent.futures
 import logging
-from typing import Any
+import time
+from typing import Any, Iterable
 
-from .model import ColumnSpec, DrillSample, ModuleReport
+from .model import ColumnSpec, DrillSample, ModuleReport, ReportModel
 
 LOG = logging.getLogger("ruckus.reports")
 
@@ -213,3 +215,71 @@ def _collect_module(spec, ctx, *, gate, filters: dict,
                     DrillSample(entity_id=str(ident),
                                 error=_error_message(exc, ctx.config)))
     return rep
+
+
+def collect_report_model(
+    connection, config: dict, *,
+    available_ops: set[tuple[str, str]],
+    slugs: Iterable[str] | None = None,
+    filters_by_slug: dict[str, dict[str, str]] | None = None,
+    drill_sample_size: int = 3,
+    raw_sample_size: int = 2,
+    per_module_timeout: float = 20.0,
+    max_workers: int = 4,
+) -> ReportModel:
+    """Collect a ``ReportModel`` over the registry (or a slug subset).
+
+    ``slugs=None`` => every module in ``all_modules()`` order. Each module runs
+    under a real ``CapabilityGate(available_ops)`` with a per-module timeout
+    enforced via ``future.result(timeout=...)`` (a slow module bounds its own
+    slot)."""
+    from ..modules import all_modules
+    from ..modules._base import FetcherContext
+    from ..infra.capability_gate import CapabilityGate
+
+    gate = CapabilityGate(available=set(available_ops or set()))
+    filters_by_slug = filters_by_slug or {}
+    ordered = all_modules()
+    if slugs is not None:
+        wanted = set(slugs)
+        ordered = [s for s in ordered if s.slug in wanted]
+
+    label = getattr(connection, "display_name", "") or ""
+    model = ReportModel(
+        generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        connection_label=label, modules=[])
+
+    def _run(spec) -> ModuleReport:
+        ctx = FetcherContext(connection=connection, config=config,
+                             filters=filters_by_slug.get(spec.slug),
+                             capability_gate=gate, connection_label=label)
+        return _collect_module(spec, ctx, gate=gate,
+                               filters=filters_by_slug.get(spec.slug) or {},
+                               drill_n=drill_sample_size, raw_n=raw_sample_size)
+
+    if not ordered:
+        return model
+
+    results: dict[str, ModuleReport] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_spec = {pool.submit(_run, spec): spec for spec in ordered}
+        for future, spec in future_to_spec.items():
+            try:
+                results[spec.slug] = future.result(timeout=per_module_timeout)
+            except concurrent.futures.TimeoutError:
+                future.cancel()
+                results[spec.slug] = ModuleReport(
+                    slug=spec.slug, title=spec.title, group=spec.group,
+                    status="error", note="timed out",
+                    columns=[ColumnSpec(c.label, c.key, c.kind)
+                             for c in spec.columns])
+            except Exception as exc:  # noqa: BLE001 — defensive
+                LOG.warning("report: %s crashed", spec.slug)
+                results[spec.slug] = ModuleReport(
+                    slug=spec.slug, title=spec.title, group=spec.group,
+                    status="error",
+                    errors=[{"connection": label, "endpoint": spec.slug,
+                             "message": str(exc), "status": 502}])
+
+    model.modules = [results[spec.slug] for spec in ordered]
+    return model
