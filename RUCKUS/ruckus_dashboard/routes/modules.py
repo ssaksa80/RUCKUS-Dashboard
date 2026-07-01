@@ -56,7 +56,8 @@ def list_modules():
              "requires_capabilities": [list(c) for c in m.requires_capabilities],
              "supports_views": list(m.supports_views),
              "columns": [{"label": c.label, "key": c.key, "kind": c.kind} for c in m.columns],
-             "filters": [{"key": f.key, "label": f.label, "kind": f.kind} for f in m.filters],
+             "filters": [{"key": f.key, "label": f.label, "kind": f.kind,
+                          "server_filter": f.server_filter} for f in m.resolved_filters],
              "drill_tabs": [{"slug": t.slug, "title": t.title} for t in m.drill_tabs],
              "has_drill": m.drill_fetcher is not None}
             for m in all_modules()
