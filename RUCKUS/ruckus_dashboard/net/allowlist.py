@@ -68,7 +68,9 @@ class HostAllowList:
             return False
         try:
             ipaddress.ip_address(h)
-            return self._ip_in_networks(h)
+            # A raw-IP literal is allowed if it is inside a configured network
+            # OR it is a pinned IP of an allow-listed hostname.
+            return h in self.pinned_ips or self._ip_in_networks(h)
         except ValueError:
             pass
         if h not in self.names:
