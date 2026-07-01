@@ -161,3 +161,25 @@ def test_layout_layered_separates_siblings_vertically():
         "console.log(JSON.stringify(p.a1.y!==p.a2.y));"
     )
     assert got is True
+
+
+def test_flow_width_monotonic_and_finite():
+    got = _run(
+        "const e={source:'g1',target:'s1',status:'online'};"
+        "const lo=T.flowWidth(e,{s1:1e6});"      # 1 Mbps
+        "const hi=T.flowWidth(e,{s1:1e9});"      # 1 Gbps
+        "const none=T.flowWidth(e,{});"          # no rate
+        "console.log(JSON.stringify({lo,hi,none,"
+        "finite:[lo,hi,none].every(isFinite),mono:hi>lo,floor:none>0}));"
+    )
+    assert got["finite"] is True
+    assert got["mono"] is True
+    assert got["floor"] is True
+
+
+def test_flow_width_never_nan_on_garbage_rate():
+    got = _run(
+        "const e={source:'g1',target:'s1'};"
+        "console.log(JSON.stringify(isFinite(T.flowWidth(e,{s1:NaN}))));"
+    )
+    assert got is True

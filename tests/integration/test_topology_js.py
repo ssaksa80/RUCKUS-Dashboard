@@ -71,3 +71,9 @@ def test_topology_js_has_problems_filter():
     js = pathlib.Path("RUCKUS/ruckus_dashboard/static/topology.js").read_text(encoding="utf-8")
     for sym in ["filterProblemsOnly", "problemsOnly", "data-topo-problems"]:
         assert sym in js, f"missing {sym}"
+
+
+def test_topology_css_has_flow_styles():
+    css = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css").read_text(encoding="utf-8")
+    for rule in [".topo-flow-ribbon", ".topo-flow-col"]:
+        assert rule in css, f"missing {rule}"

@@ -339,6 +339,18 @@ function edgeWidth(label, status) {
   return 2;
 }
 
+const FLOW_MIN_W = 2;
+const FLOW_MAX_W = 28;
+
+function flowWidth(edge, rates) {
+  // Map a link's live rate (bps) to a finite ribbon width. No/blank rate →
+  // thin floor (the "measuring…" state). Log scale so Kbps..Gbps all read.
+  const bps = Number((rates || {})[edge.target]);
+  if (!isFinite(bps) || bps <= 0) return FLOW_MIN_W;
+  const w = FLOW_MIN_W + Math.log10(1 + bps) * 2.6;
+  return Math.max(FLOW_MIN_W, Math.min(FLOW_MAX_W, w));
+}
+
 function diffAndToast(prev, nodes) {
   const toasts = [];
   nodes.forEach(n => {
@@ -776,6 +788,6 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
 // sync with the pure functions exercised by tests/integration/test_topology_node.py.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly, layoutLayered,
+    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly, layoutLayered, flowWidth,
   };
 }

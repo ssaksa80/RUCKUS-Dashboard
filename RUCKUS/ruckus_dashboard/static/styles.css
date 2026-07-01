@@ -225,6 +225,11 @@ body.dso-mode .topo-ribbon{font-size:1.3rem}
 body.dso-mode .topo-ribbon .rib-item b{font-size:2rem}
 .topo-controls button[aria-pressed="true"]{background:#1f3a5f;border-color:#4cc9f0;color:#fff}
 
+/* ── SP4 traffic-flow (Sankey-style) view ── */
+.topo-flow-ribbon{fill:none;stroke-linecap:round;mix-blend-mode:screen}
+.topo-flow-col{fill:#c7d3e0;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;opacity:.6}
+.topo-flow-bar > rect{rx:4}
+
 /* ── Drill pages: hero, tabs, key/value grid ──────────────────────────── */
 .drill-hero{background:var(--surface);border:1px solid var(--border);border-radius:8px;
   padding:16px 18px;margin-bottom:10px}
