@@ -126,3 +126,18 @@ def test_dashboard_js_apply_filters_supports_search_and_range_keys():
                     "startsWith(\"search:\")", "startsWith(\"range:\")",
                     "__search"]:
             assert sym in body, f"missing {sym}"
+
+
+def test_dashboard_js_render_filters_per_column_controls_and_clear():
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        for sym in ['type="search" data-filter-key="search:',
+                    'type="number"', 'data-filter-key="range:',
+                    "data-filter-clear", "filterSignature",
+                    '_escape']:
+            assert sym in body, f"missing {sym}"
+        # build-once staleness gate must be gone (options rebuild each render)
+        assert "host.dataset.built === slug" not in body, \
+            "renderFilters must not short-circuit on dataset.built"

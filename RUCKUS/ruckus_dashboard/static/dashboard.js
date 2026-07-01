@@ -378,36 +378,81 @@ function renderColumns(root, slug, spec, items) {
   });
 }
 
+function filterSignature(filters, items) {
+  // Signature changes when the filter set or the option universe changes, so
+  // we only rebuild controls (and lose focus/selection) when truly necessary.
+  const parts = filters.map(f => {
+    if (f.kind !== "select") return `${f.key}:${f.kind}`;
+    const opts = Array.from(new Set(items.map(i => i[f.key])
+      .filter(v => v != null && v !== ""))).sort();
+    return `${f.key}:select:${opts.join("|")}`;
+  });
+  return parts.join("~~");
+}
+
 function renderFilters(root, slug, spec, items) {
   const host = root.querySelector("[data-filters]");
   if (!host) return;
   const filters = spec.filters || [];
-  if (!filters.length) { host.innerHTML = ""; return; }
-  if (host.dataset.built === slug) return;  // build controls once per module page
+  if (!filters.length) { host.innerHTML = ""; host.dataset.sig = ""; return; }
 
+  const sig = filterSignature(filters, items);
+  if (host.dataset.sig === sig) return;   // options unchanged → keep controls
+  host.dataset.sig = sig;
+
+  const state = activeFilters[slug] || {};
   const parts = filters.map(f => {
     if (f.kind === "search") {
-      return `<input class="filter-control" type="search" placeholder="${_escape(f.label)}…" ` +
-             `data-filter-key="__search">`;
+      const cur = state[`search:${f.key}`] || "";
+      return `<label class="filter-control"><span>${_escape(f.label)}</span>` +
+             `<input type="search" data-filter-key="search:${_escape(f.key)}" ` +
+             `placeholder="${_escape(f.label)}…" value="${_escape(cur)}"></label>`;
     }
-    // Option values come from controller data (SSIDs, zone names) — escape both
-    // the attribute and the display text.
+    if (f.kind === "range") {
+      const r = state[`range:${f.key}`] || {};
+      return `<label class="filter-control"><span>${_escape(f.label)}</span>` +
+             `<input type="number" data-filter-key="range:${_escape(f.key)}" ` +
+             `data-bound="min" placeholder="min" value="${_escape(r.min ?? "")}">` +
+             `<input type="number" data-filter-key="range:${_escape(f.key)}" ` +
+             `data-bound="max" placeholder="max" value="${_escape(r.max ?? "")}"></label>`;
+    }
+    // select — options come from controller data (escape attr + text).
+    const cur = state[f.key];
+    const curArr = Array.isArray(cur) ? cur.map(String) : (cur ? [String(cur)] : []);
     const values = Array.from(new Set(items.map(i => i[f.key]).filter(v => v != null && v !== "")))
-      .sort().map(v => `<option value="${_escape(v)}">${_escape(v)}</option>`).join("");
+      .sort().map(v => {
+        const sel = curArr.includes(String(v)) ? " selected" : "";
+        return `<option value="${_escape(v)}"${sel}>${_escape(v)}</option>`;
+      }).join("");
+    const allSel = curArr.length ? "" : " selected";
     return `<label class="filter-control"><span>${_escape(f.label)}</span>` +
-           `<select data-filter-key="${_escape(f.key)}"><option value="">All</option>${values}</select></label>`;
+           `<select data-filter-key="${_escape(f.key)}"><option value=""${allSel}>All</option>${values}</select></label>`;
   });
+  parts.push(`<button class="filter-clear" data-filter-clear>Clear filters</button>`);
   host.innerHTML = parts.join("");
-  host.dataset.built = slug;
 
   host.querySelectorAll("[data-filter-key]").forEach(ctrl => {
     const handler = () => {
-      activeFilters[slug] = activeFilters[slug] || {};
-      activeFilters[slug][ctrl.dataset.filterKey] = ctrl.value;
+      const store = activeFilters[slug] = activeFilters[slug] || {};
+      const key = ctrl.dataset.filterKey;
+      if (key.startsWith("range:")) {
+        const r = store[key] = store[key] || { min: null, max: null };
+        r[ctrl.dataset.bound] = ctrl.value === "" ? null : ctrl.value;
+      } else {
+        store[key] = ctrl.value;
+      }
       renderData(root, slug, spec, lastItems[slug] || []);
     };
     ctrl.addEventListener("change", handler);
     ctrl.addEventListener("input", handler);
+  });
+
+  const clear = host.querySelector("[data-filter-clear]");
+  if (clear) clear.addEventListener("click", () => {
+    activeFilters[slug] = {};
+    host.dataset.sig = "";                 // force a rebuild with cleared controls
+    renderFilters(root, slug, spec, lastItems[slug] || []);
+    renderData(root, slug, spec, lastItems[slug] || []);
   });
 }
 
