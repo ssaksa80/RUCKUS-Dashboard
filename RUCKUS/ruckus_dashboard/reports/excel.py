@@ -1,11 +1,14 @@
 """Daily Excel report — KPI overview + per-domain sheets with charts.
 
-``build_report(data)`` consumes normalized module items:
-``data = {"aps": [...], "clients": [...], "alarms": [...], "switches": [...]}``
-and returns xlsx bytes (openpyxl)."""
+``build_report`` accepts either a ``ReportModel`` (reports/model.py) — the
+generic, all-module path — or the legacy normalized dict
+``{"aps": [...], "clients": [...], "alarms": [...], "switches": [...]}``.
+Both render the curated chart sheets plus a model-driven Coverage sheet and one
+generic sheet per module. Returns xlsx bytes (openpyxl)."""
 from __future__ import annotations
 
 import io
+import re
 import time
 from typing import Any
 
@@ -14,8 +17,12 @@ from openpyxl.chart import BarChart, PieChart, Reference
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from .model import ModuleReport, ReportModel
+
 _HEAD = Font(bold=True, color="FFFFFF")
 _HEAD_FILL = PatternFill("solid", fgColor="22A6B3")
+
+_ILLEGAL_SHEET = re.compile(r"[:\\/?*\[\]]")
 
 
 def _header(ws, row: int, labels: list[str]) -> None:
@@ -30,13 +37,68 @@ def _autofit(ws, widths: list[int]) -> None:
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
-def build_report(data: dict[str, Any]) -> bytes:
+def _safe_sheet_name(title: str, used: set[str]) -> str:
+    """Excel sheet names: <=31 chars, none of :\\/?*[]; unique within a book."""
+    base = _ILLEGAL_SHEET.sub(" ", str(title or "Sheet")).strip()[:31] or "Sheet"
+    name = base
+    n = 2
+    while name in used:
+        suffix = f" ({n})"
+        name = base[:31 - len(suffix)] + suffix
+        n += 1
+    used.add(name)
+    return name
+
+
+def _wrap_legacy(data: dict[str, Any]) -> ReportModel:
+    """Adapt the legacy {aps,clients,alarms,switches} dict to a minimal model
+    so the model-driven Overview/Coverage render alongside the curated sheets."""
+    mods: list[ModuleReport] = []
+    titles = {"aps": ("Access Points", "Wireless"),
+              "clients": ("Clients", "Wireless"),
+              "alarms": ("Alarms", "Wireless"),
+              "switches": ("Switches", "Switching")}
+    for slug, (title, group) in titles.items():
+        rows = list(data.get(slug) or [])
+        mods.append(ModuleReport(slug=slug, title=title, group=group,
+                                 status="ok", rows=rows, row_total=len(rows)))
+    return ReportModel(generated_at=time.strftime("%Y-%m-%dT%H:%M UTC",
+                                                  time.gmtime()),
+                       connection_label="", modules=mods)
+
+
+def _legacy_from_model(model: ReportModel) -> dict[str, Any]:
+    """Pull the four curated domains' rows out of a model for the chart sheets."""
+    out: dict[str, Any] = {}
+    for slug in ("aps", "clients", "alarms", "switches"):
+        rep = model.by_slug(slug)
+        out[slug] = list(rep.rows) if rep else []
+    return out
+
+
+def build_report(data_or_model) -> bytes:
+    """Render xlsx bytes from a ReportModel (new) or the legacy
+    {aps,clients,...} dict (curated sheets + model-driven Overview/Coverage)."""
+    if isinstance(data_or_model, ReportModel):
+        model = data_or_model
+        legacy = _legacy_from_model(model)
+    else:
+        legacy = data_or_model or {}
+        model = _wrap_legacy(legacy)
+    wb = Workbook()
+    _build_curated(wb, legacy)
+    _build_coverage(wb, model)
+    _build_module_sheets(wb, model)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _build_curated(wb: Workbook, data: dict[str, Any]) -> None:
     aps = data.get("aps") or []
     clients = data.get("clients") or []
     alarms = data.get("alarms") or []
     switches = data.get("switches") or []
-
-    wb = Workbook()
 
     # ── Overview ──────────────────────────────────────────────────────────
     ws = wb.active
@@ -177,6 +239,23 @@ def build_report(data: dict[str, Any]) -> bytes:
             r += 1
     _autofit(ws, [10, 26, 24, 22])
 
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+
+def _build_coverage(wb: Workbook, model: ReportModel) -> None:
+    ws = wb.create_sheet("Coverage")
+    ws["A1"] = "Module coverage"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws["A2"] = f"Generated {model.generated_at}"
+    _header(ws, 4, ["Module", "Group", "Status", "Rows", "Errors", "Note"])
+    for i, m in enumerate(model.modules, start=5):
+        ws.cell(row=i, column=1, value=m.title)
+        ws.cell(row=i, column=2, value=m.group)
+        ws.cell(row=i, column=3, value=m.status)
+        ws.cell(row=i, column=4, value=m.row_total)
+        ws.cell(row=i, column=5, value=len(m.errors))
+        ws.cell(row=i, column=6, value=m.note or "")
+    _autofit(ws, [26, 14, 10, 8, 8, 40])
+
+
+def _build_module_sheets(wb: Workbook, model: ReportModel) -> None:
+    # Replaced in Task 9 with the generic per-module sheets.
+    return
