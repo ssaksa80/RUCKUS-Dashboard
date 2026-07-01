@@ -34,3 +34,23 @@ def test_apply_filter_missing_key_treated_as_empty_string():
     rows = [{"band": "5 GHz"}, {}]
     # A row lacking the key compares as "" — only the explicit value matches.
     assert apply_filter(rows, {"band": "5 GHz"}) == [{"band": "5 GHz"}]
+
+
+def test_project_columns_keeps_only_declared_keys_and_id():
+    from ruckus_dashboard.reports.collect import project_columns
+    from ruckus_dashboard.reports.model import ColumnSpec
+
+    cols = [ColumnSpec("Host", "hostname"), ColumnSpec("Band", "band")]
+    rows = [{"id": "AA", "hostname": "h1", "band": "5 GHz", "rssi": -60}]
+    out = project_columns(rows, cols)
+    # id always kept; only declared column keys retained; rssi dropped.
+    assert out == [{"id": "AA", "hostname": "h1", "band": "5 GHz"}]
+    # key order follows the columns (id first since it is the drill key).
+    assert list(out[0].keys()) == ["id", "hostname", "band"]
+
+
+def test_project_columns_passthrough_when_no_columns():
+    from ruckus_dashboard.reports.collect import project_columns
+    rows = [{"id": "x", "a": 1, "b": 2}]
+    # No columns declared (e.g. topology) → rows pass through unchanged.
+    assert project_columns(rows, []) == rows

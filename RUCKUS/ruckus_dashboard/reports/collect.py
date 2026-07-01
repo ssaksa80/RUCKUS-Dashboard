@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .model import ColumnSpec
+
 LOG = logging.getLogger("ruckus.reports")
 
 
@@ -91,4 +93,25 @@ def apply_filter(rows: list[dict], filters: dict) -> list[dict]:
                 break
         if keep:
             out.append(row)
+    return out
+
+
+def project_columns(rows: list[dict],
+                    columns: list[ColumnSpec]) -> list[dict]:
+    """Keep only ``columns`` keys (label order), always passing through ``id``.
+
+    With no columns the rows pass through unchanged (e.g. graph modules that
+    declare none)."""
+    if not columns:
+        return list(rows)
+    keys: list[str] = ["id"] + [c.key for c in columns if c.key != "id"]
+    out: list[dict] = []
+    for row in rows:
+        projected: dict[str, Any] = {}
+        for k in keys:
+            if k == "id" and "id" not in row:
+                continue
+            if k in row:
+                projected[k] = row[k]
+        out.append(projected)
     return out
