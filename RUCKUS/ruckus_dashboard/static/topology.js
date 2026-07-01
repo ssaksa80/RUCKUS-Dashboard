@@ -258,8 +258,6 @@ function filterProblemsOnly(nodes, edges) {
   // Keep only nodes on a path to a problem (status not online/unknown), i.e.
   // every problem node plus all of its ancestors; drop fully-green subtrees
   // and any edge whose endpoints are not both kept.
-  const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
-  void byId;
   const parentOf = {};
   edges.forEach(e => { parentOf[e.target] = e.source; });
   const keep = new Set();
@@ -510,6 +508,20 @@ function renderTopology(root, payload) {
   _renderTopoLegend(root, data.legend);
 }
 
+function flowBox(nodes, edges) {
+  // Content bounding box for the flow diagram, in flow coordinates. Same
+  // {minX,minY,w,h} shape the graph path produces, so _wireTopo/vbApply can
+  // pan/zoom the flow <svg> on its OWN coordinates. Pure + deterministic:
+  // identical input → identical box (no DOM, no state). Empty → a unit box.
+  nodes = nodes || [];
+  if (!nodes.length) return { minX: 0, minY: 0, w: 1, h: 1 };
+  const pos = layoutLayered(nodes, edges || []);
+  const xs = nodes.map(n => pos[n.id].x), ys = nodes.map(n => pos[n.id].y);
+  const minX = Math.min(...xs) - 120, minY = Math.min(...ys) - 120;
+  const w = (Math.max(...xs) - minX) + 240, h = (Math.max(...ys) - minY) + 240;
+  return { minX, minY, w, h };
+}
+
 function renderFlow(data, rates) {
   // Concept D: deterministic left→right layered ribbon diagram. Returns an SVG
   // string (DOM-free for tests). Band thickness = live rate (flowWidth);
@@ -519,9 +531,15 @@ function renderFlow(data, rates) {
   rates = rates || {};
   if (!nodes.length) return `<svg class="topo-svg"></svg>`;
   const pos = layoutLayered(nodes, edges);
-  const xs = nodes.map(n => pos[n.id].x), ys = nodes.map(n => pos[n.id].y);
-  const minX = Math.min(...xs) - 120, minY = Math.min(...ys) - 120;
-  const w = (Math.max(...xs) - minX) + 240, h = (Math.max(...ys) - minY) + 240;
+  // Sync pan/zoom state to THIS view's coordinates. The graph path sets
+  // box/vb from its own extents; flow must too, else the first scroll-zoom or
+  // background-pan after a Graph→Flow toggle applies the graph's leftover
+  // viewBox onto the flow <svg>. Reset vb each render so toggling either way
+  // re-homes the active view.
+  const box = flowBox(nodes, edges);
+  topoState.box = box;
+  topoState.vb = { ...box };
+  const { minX, minY, w, h } = box;
 
   const ribbons = edges.map(e => {
     const a = pos[e.source], b = pos[e.target];
@@ -542,8 +560,8 @@ function renderFlow(data, rates) {
            `<text class="topo-label" x="${bw / 2}" y="${bh / 2 + 4}" text-anchor="middle">${_esc(n.label || n.id)}</text></g>`;
   }).join("");
 
-  const headers = [["controller", 0], ["zones / groups", 520], ["switches / APs", 1040]]
-    .map(([t, x]) => `<text class="topo-flow-col" x="${x}" y="${minY + 28}" text-anchor="middle">${_esc(t)}</text>`)
+  const headers = [["controller", 0], ["zones / groups", 1], ["switches / APs", 2]]
+    .map(([t, col]) => `<text class="topo-flow-col" x="${FLOW_COL_X[col]}" y="${minY + 28}" text-anchor="middle">${_esc(t)}</text>`)
     .join("");
 
   return `<svg class="topo-svg" viewBox="${minX} ${minY} ${w} ${h}" ` +
@@ -848,6 +866,6 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
 // sync with the pure functions exercised by tests/integration/test_topology_node.py.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly, layoutLayered, flowWidth, renderFlow, setView,
+    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle, ribbonCounts, filterProblemsOnly, layoutLayered, flowWidth, flowBox, renderFlow, setView,
   };
 }

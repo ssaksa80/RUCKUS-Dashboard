@@ -235,3 +235,65 @@ def test_render_flow_prefers_server_flow_over_rates():
         "console.log(JSON.stringify(wb>wa));"
     )
     assert _run(snippet) is True
+
+
+def test_flow_box_matches_content_extents_and_deterministic():
+    # flowBox(nodes, edges) is the pure helper renderFlow uses to sync the flow
+    # view's pan/zoom viewBox. Its box must wrap the laid-out node extents
+    # (with the 120px margin / 240px padding renderFlow used inline) and be
+    # deterministic: same input -> same box.
+    snippet = (
+        "const nodes=["
+        "{id:'controller',type:'controller',status:'online',label:'C',meta:{}},"
+        "{id:'z1',type:'zone',status:'online',label:'Z',meta:{}},"
+        "{id:'s1',type:'switch',status:'online',label:'S1',meta:{}},"
+        "{id:'s2',type:'switch',status:'online',label:'S2',meta:{}}];"
+        "const edges=[{source:'controller',target:'z1',status:'online'},"
+        "{source:'z1',target:'s1',status:'online'},"
+        "{source:'z1',target:'s2',status:'online'}];"
+        "const pos=T.layoutLayered(nodes,edges);"
+        "const xs=nodes.map(n=>pos[n.id].x), ys=nodes.map(n=>pos[n.id].y);"
+        "const minX=Math.min(...xs)-120, minY=Math.min(...ys)-120;"
+        "const w=(Math.max(...xs)-minX)+240, h=(Math.max(...ys)-minY)+240;"
+        "const b1=T.flowBox(nodes,edges), b2=T.flowBox(nodes,edges);"
+        "console.log(JSON.stringify({"
+        "matches:b1.minX===minX&&b1.minY===minY&&b1.w===w&&b1.h===h,"
+        "finite:[b1.minX,b1.minY,b1.w,b1.h].every(isFinite),"
+        "positiveSize:b1.w>0&&b1.h>0,"
+        "deterministic:JSON.stringify(b1)===JSON.stringify(b2)}));"
+    )
+    got = _run(snippet)
+    assert got["matches"] is True
+    assert got["finite"] is True
+    assert got["positiveSize"] is True
+    assert got["deterministic"] is True
+
+
+def test_flow_box_empty_is_unit_box():
+    # No nodes -> a safe non-degenerate box (never zero/NaN width).
+    got = _run(
+        "const b=T.flowBox([],[]);"
+        "console.log(JSON.stringify({box:b,ok:b.w>0&&b.h>0&&isFinite(b.minX)}));"
+    )
+    assert got["ok"] is True
+
+
+def test_render_flow_viewbox_agrees_with_flow_box():
+    # The <svg> viewBox renderFlow emits must equal flowBox(nodes, edges) so the
+    # inline viewBox and topoState.vb (set from the same box) agree after a
+    # render -- the fix for the Graph->Flow pan/zoom jump.
+    snippet = (
+        "const data={nodes:["
+        "{id:'controller',type:'controller',status:'online',label:'C',meta:{}},"
+        "{id:'g1',type:'group',status:'online',label:'Core',meta:{}},"
+        "{id:'s1',type:'switch',status:'online',label:'SW-1',meta:{}}],"
+        "edges:[{source:'controller',target:'g1',status:'online',label:''},"
+        "{source:'g1',target:'s1',status:'online',label:''}]};"
+        "const b=T.flowBox(data.nodes,data.edges);"
+        "const svg=T.renderFlow(data,{});"
+        "const vb=svg.match(/viewBox=\"([^\"]+)\"/)[1].split(' ').map(Number);"
+        "console.log(JSON.stringify({"
+        "agree:vb[0]===b.minX&&vb[1]===b.minY&&vb[2]===b.w&&vb[3]===b.h}));"
+    )
+    got = _run(snippet)
+    assert got["agree"] is True
