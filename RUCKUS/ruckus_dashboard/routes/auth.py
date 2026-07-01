@@ -75,6 +75,10 @@ def login_post():
         flash("Too many failed attempts. Try again later.", "error")
         return _login_error(status=429)
 
+    # Resolve the user + verdict in one scope, capturing plain values so all
+    # auditing happens AFTER the scope closes (record_audit opens its own
+    # session; nesting the same thread-local scoped session would close it out
+    # from under this block).
     with session_scope(current_app) as s:
         user = users_mod.get_by_email(s, email)
         ok = (
@@ -82,23 +86,25 @@ def login_post():
             and user.is_active
             and users_mod.verify_password(user, password)
         )
-        if not ok:
-            limiter.register_failure(key)
-            reason = (
-                "unknown_user" if user is None
-                else "inactive" if not user.is_active
-                else "bad_password"
-            )
-            record_audit(current_app, action="login_failure",
-                         user_id=(user.id if user else None),
-                         tenant_id=(user.tenant_id if user else None),
-                         detail={"email": email, "reason": reason})
-            flash("Invalid credentials.", "error")
-            return _login_error(status=401)
+        if ok:
+            users_mod.record_login(s, user)
+        uid = user.id if user else None
+        tid = user.tenant_id if user else None
+        role = user.role if user else None
+        if user is None:
+            reason = "unknown_user"
+        elif not user.is_active:
+            reason = "inactive"
+        else:
+            reason = None  # success or bad password
 
-        # Success: capture identity, then rotate the session.
-        users_mod.record_login(s, user)
-        uid, tid, role = user.id, user.tenant_id, user.role
+    if not ok:
+        limiter.register_failure(key)
+        record_audit(current_app, action="login_failure", user_id=uid,
+                     tenant_id=tid,
+                     detail={"email": email, "reason": reason or "bad_password"})
+        flash("Invalid credentials.", "error")
+        return _login_error(status=401)
 
     limiter.reset(key)
     _rotate_session_for_login(uid, tid, role)
