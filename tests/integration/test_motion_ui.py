@@ -154,3 +154,26 @@ def test_motion_js_is_leak_safe_and_reduced_motion_aware():
         assert "matchMedia" in body
         # leak rule: no interval timers introduced by the motion layer
         assert "setInterval" not in body
+
+
+def test_dashboard_js_wires_kpi_state_class_and_count_up():
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        # state→class mapper for KPI cards (Q1)
+        assert "function kpiHealthClass" in body
+        # count-up + flash applied via the guarded helper
+        assert "_motion(" in body or "RuckusMotion" in body
+        assert "animateCount" in body
+        assert "value-changed" in body
+        # refresh pulse fired once per render on the module root
+        assert 'pulse(root, "refreshed")' in body or 'RuckusMotion.pulse(root' in body
+
+
+def test_dashboard_js_motion_is_fail_open():
+    """Spec §4.7: a throw in the motion layer must never break renderModule."""
+    app = create_app({"SECRET_KEY": "t"})
+    with app.test_client() as c:
+        body = c.get("/static/dashboard.js").data.decode()
+        assert "function _motion" in body  # try/catch wrapper around RuckusMotion calls
+        assert "try {" in body

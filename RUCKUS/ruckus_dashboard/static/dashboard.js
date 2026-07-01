@@ -12,6 +12,29 @@ const lastItems = {};
 // Per-drill-table client filter state, namespaced "<slug>:drill:<sig>".
 const drillFilters = {};
 
+// ── SP5 motion glue ──────────────────────────────────────────────────────
+// Fail-open wrapper: a throw or a missing RuckusMotion must never break a
+// render (the textContent/innerHTML writes remain the source of truth).
+function _motion(fn) {
+  try {
+    if (window.RuckusMotion) fn(window.RuckusMotion);
+  } catch (_e) { /* enhancement only — ignore */ }
+}
+
+// Map a KPI key+value to a health class for glow. Only a few slugs carry a
+// meaningful threshold; everything else stays "neutral" (no behavior change).
+function kpiHealthClass(slug, key, value) {
+  const n = Number(value);
+  if (!isFinite(n)) return "neutral";
+  if (slug === "alarms") {
+    if (key === "critical" && n > 0) return "critical";
+    if ((key === "major" || key === "minor" || key === "warning") && n > 0) return "watch";
+  }
+  if (slug === "rogues" && key === "total" && n > 0) return "critical";
+  if (slug === "clients" && key === "poor_signal" && n > 0) return "watch";
+  return "neutral";
+}
+
 async function loadModuleSpecs() {
   if (Object.keys(moduleSpecs).length) return moduleSpecs;
   try {
@@ -141,7 +164,9 @@ function renderModule(slug, payload) {
       .map(([k, v]) => {
         const label = labels[k] || k.replace(/_/g, " ");
         const clickable = filterMap[k] ? ` clickable" data-kpi-key="${_escape(k)}` : "";
-        return `<div class="kpi-card neutral${clickable}"><span class="kpi-label">${_escape(label)}</span>` +
+        const health = kpiHealthClass(slug, k, v);
+        return `<div class="kpi-card ${health}${clickable}" data-kpi-id="${_escape(k)}">` +
+               `<span class="kpi-label">${_escape(label)}</span>` +
                `<span class="kpi-value" aria-live="polite">${_escape(formatKpiValue(v))}</span></div>`;
       })
       .join("");
@@ -149,6 +174,20 @@ function renderModule(slug, payload) {
       card.addEventListener("click", () => {
         applyKpiFilter(root, slug, card.dataset.kpiKey);
       });
+    });
+    // Count up finite numerics; flash formatted/non-numeric changes.
+    Object.entries(payload.summary).forEach(([k, v]) => {
+      const card = strip.querySelector(`[data-kpi-id="${CSS.escape(k)}"]`);
+      const valEl = card && card.querySelector(".kpi-value");
+      if (!valEl) return;
+      const n = Number(v);
+      if (typeof v !== "object" && v !== null && isFinite(n) && String(v).trim() !== "") {
+        _motion(m => m.animateCount(valEl, n, { fmt: String, duration: 320 }));
+      } else {
+        valEl.classList.remove("value-changed");
+        void valEl.offsetWidth;
+        valEl.classList.add("value-changed");
+      }
     });
   }
 
@@ -177,6 +216,7 @@ function renderModule(slug, payload) {
       eb.hidden = true;
     }
   }
+  _motion(m => m.pulse(root, "refreshed"));
 }
 
 function _applyFilters(slug, items) {
