@@ -115,3 +115,19 @@ def test_api_explorer_moved_to_topbar_button():
         # No sidebar nav entry; topbar link opens a new tab instead.
         assert 'data-slug="api-explorer"' not in html.split("topbar-actions")[0].split("</aside>")[0]
         assert 'href="/m/api-explorer" target="_blank"' in html
+
+
+def test_module_page_has_email_tab_button_and_csrf_meta(tmp_path):
+    from ruckus_dashboard.app import create_app
+    app = create_app({"SECRET_KEY": "t", "RUCKUS_ENABLE_NEW_UI": True})
+    with app.test_client() as c:
+        c.get("/")
+        with c.session_transaction() as s:
+            s["auth"] = True
+            s["connection_ids"] = []
+        r = c.get("/m/clients")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert '<meta name="csrf-token"' in body
+        assert "data-email-tab" in body
+        assert "Email this tab" in body
