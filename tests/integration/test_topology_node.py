@@ -63,3 +63,19 @@ def test_health_weight_never_nan():
         "console.log(JSON.stringify(isFinite(T.healthWeight(n))));"
     )
     assert got is True
+
+
+def test_render_node_markup_carries_glow_style():
+    # nodeGlowStyle(n) returns the inline style string applied to each node <g>.
+    got = _run(
+        "const off={id:'z1',status:'offline',type:'zone',meta:{ap_total:4,ap_down:4}};"
+        "const on={id:'z2',status:'online',type:'zone',meta:{ap_total:4,ap_down:0}};"
+        "const so=T.nodeGlowStyle(off), sn=T.nodeGlowStyle(on);"
+        "console.log(JSON.stringify({so, sn, hasVar: so.indexOf('--glow')>=0}));"
+    )
+    assert got["hasVar"] is True
+    # offline node must request a stronger glow than the online one
+    import re
+    fo = float(re.search(r"--glow:\s*([0-9.]+)", got["so"]).group(1))
+    fn = float(re.search(r"--glow:\s*([0-9.]+)", got["sn"]).group(1))
+    assert fo > fn

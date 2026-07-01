@@ -47,3 +47,9 @@ def test_topology_js_has_node_export():
     assert 'typeof module !== "undefined"' in js
     assert 'typeof document !== "undefined"' in js
     assert "module.exports" in js
+
+
+def test_topology_css_has_glow_and_reduced_motion():
+    css = pathlib.Path("RUCKUS/ruckus_dashboard/static/styles.css").read_text(encoding="utf-8")
+    for rule in [".topo-node.glow", "--glow", "prefers-reduced-motion"]:
+        assert rule in css, f"missing {rule}"

@@ -90,6 +90,13 @@ function healthWeight(n) {
   return Math.max(0, Math.min(1, w));
 }
 
+function nodeGlowStyle(n) {
+  // Inline style string for a node <g>: exposes the severity-driven glow
+  // strength as the CSS var --glow (0..1), consumed by .topo-node.glow.
+  const w = healthWeight(n);
+  return `--glow:${w.toFixed(3)}`;
+}
+
 function layoutGraph(nodes, edges, saved, pinned) {
   saved = saved || {}; pinned = pinned || new Set();
   const pos = {};
@@ -377,7 +384,7 @@ function renderTopology(root, payload) {
     const p = pos[n.id]; if (!p) return "";
     const col = TOPO_COLORS[n.status] || TOPO_COLORS.unknown;
     const g = TOPO_GLYPH[n.type] || "•";
-    const r = nodeRadius(n);
+    const r = nodeRadius(n) + Math.round(healthWeight(n) * 10);
     const alarms = (n.meta && n.meta.alarm_count) || 0;
     const pulse = (n.status === "offline" || alarms > 0 ? " pulse" : "") +
                   (topoState.collapsed.has(n.id) ? " collapsed" : "");
@@ -386,7 +393,7 @@ function renderTopology(root, payload) {
       ? `<circle class="topo-badge" cx="${r - 4}" cy="${-(r - 4)}" r="9"/>` +
         `<text class="topo-badge-text" x="${r - 4}" y="${-(r - 8)}" text-anchor="middle">${alarms > 9 ? "9+" : alarms}</text>`
       : "";
-    return `<g class="topo-node${pulse}" data-node="${_esc(n.id)}" transform="translate(${p.x},${p.y})">` +
+    return `<g class="topo-node glow${pulse}" data-node="${_esc(n.id)}" style="${nodeGlowStyle(n)}" transform="translate(${p.x},${p.y})">` +
            `<circle r="${r}" fill="#0d1b2a" stroke="${col}" stroke-width="3"/>` +
            `<text class="glyph" text-anchor="middle" dy="6" font-size="${Math.max(12, r - 6)}">${g}</text>` +
            badge +
@@ -686,6 +693,6 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
 // sync with the pure functions exercised by tests/integration/test_topology_node.py.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight,
+    fmtRate, nodeRadius, layoutGraph, visibleGraph, edgePath, healthWeight, nodeGlowStyle,
   };
 }

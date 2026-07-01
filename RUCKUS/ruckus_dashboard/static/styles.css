@@ -203,6 +203,16 @@ body.dso-mode .health-bar{display:none}
 /* Topology v3: collapsed groups show a dashed ring */
 .topo-node.collapsed > circle{stroke-dasharray:6 4}
 
+/* ── SP4 health-glow: severity-driven node glow (drop-shadow strength via --glow) ── */
+.topo-node.glow > circle{
+  filter:drop-shadow(0 0 calc(2px + var(--glow,0) * 22px) rgba(231,76,60,calc(var(--glow,0) * .9)));
+}
+/* Calm field: near-zero glow = no shadow, so healthy nodes recede. */
+.topo-node.glow{transition:filter .4s ease}
+@media (prefers-reduced-motion: reduce){
+  .topo-node.pulse > circle{animation:none;stroke-opacity:1}
+}
+
 /* ── Drill pages: hero, tabs, key/value grid ──────────────────────────── */
 .drill-hero{background:var(--surface);border:1px solid var(--border);border-radius:8px;
   padding:16px 18px;margin-bottom:10px}
