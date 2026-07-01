@@ -570,3 +570,87 @@ def test_reconcile_flap_within_debounce_suppressed():
     # Pending cleared; stable online.
     assert new_devices["ap:aa"].pending_since is None
     assert new_devices["ap:aa"].online is True
+
+
+# ── outage: render_alert ──────────────────────────────────────────────────
+
+def _make_event(kind, key, typ, name, group, ts=5000.0):
+    from ruckus_dashboard.notify.outage import OutageEvent
+    return OutageEvent(kind=kind, key=key, type=typ, name=name,
+                       group=group, raw_status="offline", ts=ts)
+
+
+def test_render_alert_subject_counts():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [
+        _make_event("offline", "ap:a1", "ap", "AP-1", "HQ"),
+        _make_event("offline", "ap:a2", "ap", "AP-2", "Branch"),
+        _make_event("online",  "sw:s1", "switch", "SW-1", "Core"),
+    ]
+    note = render_alert(events, group_by="site")
+    assert "2 devices offline" in note.subject
+    assert "1 recovered" in note.subject
+
+
+def test_render_alert_subject_includes_groups():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [
+        _make_event("offline", "ap:a1", "ap", "AP-1", "HQ"),
+        _make_event("offline", "ap:a2", "ap", "AP-2", "Branch"),
+    ]
+    note = render_alert(events, group_by="site")
+    assert "HQ" in note.subject or "Branch" in note.subject
+
+
+def test_render_alert_body_groups_by_site():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [
+        _make_event("offline", "ap:a1", "ap", "AP-1", "HQ"),
+        _make_event("offline", "sw:s1", "switch", "SW-1", "HQ"),
+        _make_event("offline", "ap:a2", "ap", "AP-2", "Branch"),
+    ]
+    note = render_alert(events, group_by="site")
+    assert "HQ" in note.body
+    assert "Branch" in note.body
+    assert "AP-1" in note.body
+    assert "SW-1" in note.body
+    assert "AP-2" in note.body
+
+
+def test_render_alert_body_flat_when_group_by_none():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [
+        _make_event("offline", "ap:a1", "ap", "AP-1", "HQ"),
+        _make_event("offline", "ap:a2", "ap", "AP-2", "Branch"),
+    ]
+    note = render_alert(events, group_by="none")
+    assert "AP-1" in note.body
+    assert "AP-2" in note.body
+
+
+def test_render_alert_recovery_section_in_body():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [
+        _make_event("offline", "ap:a1", "ap", "AP-1", "HQ"),
+        _make_event("online",  "sw:s1", "switch", "SW-1", "Core"),
+    ]
+    note = render_alert(events, group_by="site")
+    assert "Recovered" in note.body or "recovered" in note.body
+    assert "SW-1" in note.body
+
+
+def test_render_alert_structured_events_tuple():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [_make_event("offline", "ap:a1", "ap", "AP-1", "HQ")]
+    note = render_alert(events, group_by="site")
+    assert len(note.events) == 1
+    assert note.events[0].key == "ap:a1"
+
+
+def test_render_alert_controller_node_event():
+    from ruckus_dashboard.notify.outage import render_alert
+    events = [_make_event("offline", "controller:node1",
+                          "controller", "SZ-Node-1", "controller")]
+    note = render_alert(events, group_by="site")
+    assert "SZ-Node-1" in note.body
+    assert "controller" in note.body.lower()

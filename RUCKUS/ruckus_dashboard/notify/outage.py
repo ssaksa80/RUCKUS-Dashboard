@@ -231,3 +231,89 @@ class OutageEngine:
             emitted_events.extend(pending_offline_events)
 
         return emitted_events, new_devices
+
+
+# ── Notification (defined here; re-exported from channels.py) ────────────
+
+@dataclass(frozen=True)
+class Notification:
+    """A rendered alert ready for dispatch via any NotificationChannel."""
+    subject: str
+    body: str
+    events: tuple[OutageEvent, ...]   # structured, for non-text channels
+
+
+# ── render_alert ──────────────────────────────────────────────────────────
+
+def render_alert(events: list[OutageEvent], group_by: str = "site") -> Notification:
+    """Produce a Notification from a list of OutageEvents.
+
+    group_by='site'  → events grouped by device.group (zone / stack / "controller")
+    group_by='none'  → flat list, no site headers
+    """
+    import datetime
+
+    offline = [e for e in events if e.kind == "offline"]
+    online  = [e for e in events if e.kind == "online"]
+
+    # Subject
+    parts = []
+    if offline:
+        parts.append(f"{len(offline)} device{'s' if len(offline) != 1 else ''} offline")
+    if online:
+        parts.append(f"{len(online)} recovered")
+    summary = ", ".join(parts)
+
+    # Collect group names for subject
+    groups = sorted({e.group or "unknown" for e in offline})
+    group_str = ", ".join(groups[:3])
+    if len(groups) > 3:
+        group_str += f" +{len(groups) - 3} more"
+    subject = f"[RUCKUS DSO] {summary}"
+    if group_str:
+        subject += f" ({group_str})"
+
+    lines: list[str] = []
+
+    def _fmt_event(e: OutageEvent) -> str:
+        ts_str = datetime.datetime.fromtimestamp(e.ts).strftime("%Y-%m-%d %H:%M:%S")
+        return f"  {e.name} ({e.type}) — {e.raw_status} at {ts_str}"
+
+    if offline:
+        if group_by == "site":
+            by_group: dict[str, list[OutageEvent]] = {}
+            for e in offline:
+                by_group.setdefault(e.group or "unknown", []).append(e)
+            lines.append("DEVICES OFFLINE")
+            lines.append("=" * 40)
+            for grp in sorted(by_group):
+                lines.append(f"\n[{grp}]")
+                for e in by_group[grp]:
+                    lines.append(_fmt_event(e))
+        else:
+            lines.append("DEVICES OFFLINE")
+            lines.append("=" * 40)
+            for e in offline:
+                lines.append(_fmt_event(e))
+
+    if online:
+        lines.append("")
+        lines.append("Recovered")
+        lines.append("=" * 40)
+        if group_by == "site":
+            by_group_r: dict[str, list[OutageEvent]] = {}
+            for e in online:
+                by_group_r.setdefault(e.group or "unknown", []).append(e)
+            for grp in sorted(by_group_r):
+                lines.append(f"\n[{grp}]")
+                for e in by_group_r[grp]:
+                    lines.append(_fmt_event(e))
+        else:
+            for e in online:
+                lines.append(_fmt_event(e))
+
+    lines.append("")
+    lines.append("— RUCKUS DSO Dashboard")
+    body = "\n".join(lines)
+
+    return Notification(subject=subject, body=body, events=tuple(events))
