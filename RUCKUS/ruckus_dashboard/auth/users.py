@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from ..db import session_scope
 from ..db.models import Role, Tenant, User
+from .audit import record_audit
 
 LOG = logging.getLogger("ruckus_dashboard.auth.users")
 
@@ -215,9 +216,17 @@ def upsert_oidc_user(
     returns the committed User; because the session factory uses
     ``expire_on_commit=False`` the returned instance's attributes stay readable
     after the scope closes, so the caller can set the session identity from it.
+
+    When an **existing** user's role changes (the newly-mapped role differs from
+    the stored one), a single ``role_changed`` audit row is written
+    (``detail={"method":"oidc","from":<old>,"to":<new>}``); an unchanged role and
+    a brand-new JIT user write none. The audit is recorded AFTER this scope
+    closes because :func:`record_audit` opens its own session (nesting the same
+    thread-local scoped session would close it out from under us).
     """
     role_name = Role.coerce(role).name  # raises on unknown role
     norm_email = _normalize_email(email)
+    role_change: Optional[tuple[int, Optional[int], str, str]] = None
     with session_scope(app) as s:
         user = (
             s.query(User).filter(User.oidc_subject == subject).one_or_none()
@@ -238,7 +247,11 @@ def upsert_oidc_user(
             )
             s.add(user)
         else:
-            # Known subject — refresh from the IdP on each login.
+            # Known subject — refresh from the IdP on each login. Capture a
+            # role change (old != new) to audit once the scope commits.
+            old_role = user.role
+            if old_role != role_name:
+                role_change = (user.id, user.tenant_id, old_role, role_name)
             if display_name is not None:
                 user.display_name = display_name
             user.role = role_name
@@ -246,4 +259,11 @@ def upsert_oidc_user(
 
         record_login(s, user)
         s.flush()  # assign PK before the scope commits
+
+    if role_change is not None:
+        uid, tid, from_role, to_role = role_change
+        record_audit(
+            app, action="role_changed", user_id=uid, tenant_id=tid,
+            detail={"method": "oidc", "from": from_role, "to": to_role},
+        )
     return user

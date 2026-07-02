@@ -150,6 +150,19 @@ def complete_login(app) -> dict[str, Any]:
     return claims
 
 
+def _coerce_email_verified(raw: Any) -> bool:
+    """Normalize an ``email_verified`` claim to a real ``bool`` (default False).
+
+    IdPs are inconsistent: some send a JSON boolean, some the strings
+    ``"true"``/``"false"``. A truthy ``"false"`` string must not read as True,
+    so string values are compared case-insensitively against ``"true"``; any
+    other type falls back to Python truthiness. A missing claim is False.
+    """
+    if isinstance(raw, str):
+        return raw.strip().lower() == "true"
+    return bool(raw)
+
+
 def extract_claims(app, claims: dict[str, Any]) -> tuple[str, str, Optional[str], list]:
     """Pull ``(subject, email, display_name, groups)`` from validated claims.
 
@@ -158,10 +171,19 @@ def extract_claims(app, claims: dict[str, Any]) -> tuple[str, str, Optional[str]
     ``name`` → ``preferred_username`` → the email local-part. ``groups`` comes
     from the configured claim (default ``groups``), coerced to a list; a scalar
     becomes a one-element list, a missing claim becomes ``[]``.
+
+    Side effect: normalizes ``claims["email_verified"]`` to a real ``bool``
+    (default ``False``) so callers/audit can read it defensively. This is purely
+    informational — account linking remains **strictly** subject-based (PB2);
+    the email claim is never a join key regardless of this flag.
     """
     sub = claims.get("sub")
     if not sub:
         raise ValueError("id_token missing required 'sub' claim")
+
+    # Surface a normalized email_verified on the claims dict (defense-in-depth;
+    # NOT used for linking). Missing → False.
+    claims["email_verified"] = _coerce_email_verified(claims.get("email_verified"))
 
     email = (claims.get("email") or "").strip()
 

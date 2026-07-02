@@ -11,7 +11,7 @@ import pytest
 from ruckus_dashboard.app import create_app
 from ruckus_dashboard.db import session_scope
 from ruckus_dashboard.auth import users as users_mod
-from ruckus_dashboard.db.models import Role, Tenant, User
+from ruckus_dashboard.db.models import AuditLog, Role, Tenant, User
 
 
 @pytest.fixture
@@ -125,3 +125,73 @@ def test_upsert_email_normalized(app):
         display_name="M", role=Role.viewer,
     )
     assert user.email == "mixedcase@corp.local"
+
+
+# ── role_changed audit (only on change) ──────────────────────────────────────
+
+def _role_changed_rows(app):
+    with session_scope(app) as s:
+        return [
+            {"user_id": a.user_id, "tenant_id": a.tenant_id,
+             "detail": dict(a.detail or {})}
+            for a in s.query(AuditLog).filter_by(action="role_changed").all()
+        ]
+
+
+def test_upsert_role_change_writes_one_audit(app):
+    first = users_mod.upsert_oidc_user(
+        app, subject="sub-rc", email="rc@corp.local",
+        display_name="RC", role=Role.viewer,
+    )
+    uid, tid = first.id, first.tenant_id
+    # Second login, same subject, higher role mapped from the IdP groups.
+    users_mod.upsert_oidc_user(
+        app, subject="sub-rc", email="rc@corp.local",
+        display_name="RC", role=Role.operator,
+    )
+    rows = _role_changed_rows(app)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["user_id"] == uid
+    assert row["tenant_id"] == tid
+    assert row["detail"] == {
+        "method": "oidc", "from": Role.viewer.name, "to": Role.operator.name,
+    }
+
+
+def test_upsert_same_role_writes_no_audit(app):
+    users_mod.upsert_oidc_user(
+        app, subject="sub-same", email="same@corp.local",
+        display_name="S", role=Role.operator,
+    )
+    # Re-login with the identical role — nothing changed, no audit.
+    users_mod.upsert_oidc_user(
+        app, subject="sub-same", email="same@corp.local",
+        display_name="S", role=Role.operator,
+    )
+    assert _role_changed_rows(app) == []
+
+
+def test_upsert_new_user_writes_no_role_changed_audit(app):
+    # A brand-new JIT user is not a "change" from an existing role.
+    users_mod.upsert_oidc_user(
+        app, subject="sub-new-rc", email="newrc@corp.local",
+        display_name="N", role=Role.admin,
+    )
+    assert _role_changed_rows(app) == []
+
+
+def test_upsert_role_change_records_correct_direction(app):
+    # Downgrades are audited too (operator -> viewer), with from/to correct.
+    users_mod.upsert_oidc_user(
+        app, subject="sub-down", email="down@corp.local",
+        display_name="D", role=Role.operator,
+    )
+    users_mod.upsert_oidc_user(
+        app, subject="sub-down", email="down@corp.local",
+        display_name="D", role=Role.viewer,
+    )
+    rows = _role_changed_rows(app)
+    assert len(rows) == 1
+    assert rows[0]["detail"]["from"] == Role.operator.name
+    assert rows[0]["detail"]["to"] == Role.viewer.name

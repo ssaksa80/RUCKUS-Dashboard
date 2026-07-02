@@ -169,3 +169,49 @@ def test_extract_claims_missing_sub_raises():
     app = _app()
     with pytest.raises(ValueError):
         oidc.extract_claims(app, {"email": "e@x.y"})
+
+
+# ── email_verified (informational / defense-in-depth) ─────────────────────────
+#
+# extract_claims normalizes email_verified into a real bool on the claims dict
+# it is handed (the validated claims from complete_login). This is purely
+# informational — subject-only account linking is unchanged; email is NEVER a
+# join key. The 4-tuple return contract (sub, email, name, groups) is preserved.
+
+def test_extract_claims_surfaces_email_verified_true():
+    app = _app()
+    claims = {"sub": "s", "email": "e@x.y", "email_verified": True}
+    oidc.extract_claims(app, claims)
+    assert claims["email_verified"] is True
+
+
+def test_extract_claims_surfaces_email_verified_false():
+    app = _app()
+    claims = {"sub": "s", "email": "e@x.y", "email_verified": False}
+    oidc.extract_claims(app, claims)
+    assert claims["email_verified"] is False
+
+
+def test_extract_claims_email_verified_missing_defaults_false():
+    app = _app()
+    claims = {"sub": "s", "email": "e@x.y"}
+    oidc.extract_claims(app, claims)
+    assert claims["email_verified"] is False
+
+
+def test_extract_claims_email_verified_truthy_string_coerced():
+    # Some IdPs send the claim as a JSON string "true"/"false"; normalize both
+    # to a real bool so downstream never trusts a truthy "false" string.
+    app = _app()
+    for raw, expected in (("true", True), ("false", False),
+                          ("True", True), ("", False), (1, True), (0, False)):
+        claims = {"sub": "s", "email": "e@x.y", "email_verified": raw}
+        oidc.extract_claims(app, claims)
+        assert claims["email_verified"] is expected, raw
+
+
+def test_extract_claims_return_contract_unchanged():
+    # Still a 4-tuple; email_verified is surfaced on the dict, not appended.
+    app = _app()
+    result = oidc.extract_claims(app, {"sub": "s", "email": "e@x.y"})
+    assert len(result) == 4
