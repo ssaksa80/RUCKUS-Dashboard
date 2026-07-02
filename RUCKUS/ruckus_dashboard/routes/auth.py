@@ -234,6 +234,18 @@ def oidc_callback():
             display_name=display_name, role=role,
         )
         uid, tid, role_name = user.id, user.tenant_id, user.role
+    except users_mod.OidcEmailConflict:
+        # The inbound email claim collides with a different existing account.
+        # Refuse the login (never auto-link/overwrite by an unverified email —
+        # that would be account takeover). Audit generically WITHOUT revealing
+        # which email conflicted, and show the same generic OIDC error.
+        LOG.warning("OIDC callback refused: email claim conflicts with an "
+                    "existing account")
+        record_audit(current_app, action="login_failure",
+                     detail={"method": "oidc", "stage": "callback",
+                             "reason": "email_conflict"})
+        flash(_OIDC_ERROR_FLASH, "error")
+        return redirect(url_for("auth.login"))
     except Exception:  # noqa: BLE001 - any OIDC failure is a generic login error
         # Do NOT log/flash the token or the raw exception message. exc_info goes
         # only to the server log, never to the user or the audit detail.

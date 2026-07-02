@@ -61,28 +61,49 @@ def test_upsert_same_subject_updates_not_duplicates(app):
         assert row.role == Role.admin.name
 
 
-def test_upsert_attaches_subject_to_existing_local_user_by_email(app):
-    # A local user pre-exists (e.g. the break-glass admin, or an admin-created
-    # account). First OIDC login for the same email attaches the subject rather
-    # than creating a duplicate.
+def test_upsert_refuses_to_attach_subject_by_email_claim(app):
+    # SECURITY: an inbound OIDC identity whose email matches an existing LOCAL
+    # account must NOT attach/hijack that account (email is an attacker-
+    # influenceable IdP claim; Authlib validates iss/aud/exp/nonce/signature,
+    # NOT email ownership). The upsert must refuse with OidcEmailConflict and
+    # leave the existing account untouched — no subject bound, role unchanged.
     tid = _default_tenant_id(app)
     with session_scope(app) as s:
         users_mod.create_user(
             s, tenant_id=tid, email="carol@corp.local",
             password="Local-Pw-12345", role="viewer",
         )
-    user = users_mod.upsert_oidc_user(
-        app, subject="sub-carol", email="carol@corp.local",
-        display_name="Carol", role=Role.operator,
-    )
+    with pytest.raises(users_mod.OidcEmailConflict) as exc:
+        users_mod.upsert_oidc_user(
+            app, subject="sub-attacker", email="carol@corp.local",
+            display_name="Carol", role=Role.admin,
+        )
+    assert exc.value.email == "carol@corp.local"
     with session_scope(app) as s:
         rows = s.query(User).filter(User.email == "carol@corp.local").all()
-        assert len(rows) == 1  # no duplicate
+        assert len(rows) == 1  # no duplicate created
         row = rows[0]
-        assert row.oidc_subject == "sub-carol"
-        # Existing local password is preserved (still a break-glass path).
-        assert row.password_hash is not None
-    assert user.oidc_subject == "sub-carol"
+        assert row.oidc_subject is None  # subject NOT bound — no hijack
+        assert row.role == Role.viewer.name  # role NOT escalated
+        # No attacker subject leaked onto any row.
+        assert s.query(User).filter_by(oidc_subject="sub-attacker").count() == 0
+
+
+def test_upsert_break_glass_admin_cannot_be_hijacked_by_email(app):
+    # The seeded break-glass admin has email "admin". An OIDC identity claiming
+    # email="admin" must be refused, never rewriting the admin row.
+    with pytest.raises(users_mod.OidcEmailConflict) as exc:
+        users_mod.upsert_oidc_user(
+            app, subject="sub-attacker-admin", email="admin",
+            display_name="Not The Admin", role=Role.admin,
+        )
+    assert exc.value.email == "admin"
+    with session_scope(app) as s:
+        admin = s.query(User).filter_by(email="admin").one()
+        assert admin.oidc_subject is None  # break-glass subject untouched
+        assert admin.role == Role.admin.name
+        assert admin.password_hash is not None  # local break-glass password kept
+        assert s.query(User).filter_by(oidc_subject="sub-attacker-admin").count() == 0
 
 
 def test_upsert_returns_detached_usable_user(app):

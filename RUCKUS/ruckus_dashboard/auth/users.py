@@ -29,6 +29,23 @@ LOG = logging.getLogger("ruckus_dashboard.auth.users")
 _pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 
+class OidcEmailConflict(Exception):
+    """An OIDC login's email claim collides with a different existing account.
+
+    Raised by :func:`upsert_oidc_user` when no user matches the OIDC
+    ``subject`` yet the inbound ``email`` claim is already owned by another
+    account. Because ``email`` is an attacker-influenceable IdP claim (Authlib
+    validates iss/aud/exp/nonce/signature — never email ownership), we refuse
+    to auto-link or overwrite by email: doing so would let any IdP account take
+    over a privileged local/OIDC user (e.g. the break-glass ``admin``). The
+    OIDC callback catches this and rejects the login with a generic error.
+    """
+
+    def __init__(self, email: str):
+        self.email = email
+        super().__init__("OIDC email claim conflicts with an existing account")
+
+
 def hash_password(plaintext: str) -> str:
     """Return an argon2id hash for ``plaintext`` (never store the plaintext)."""
     return _pwd_context.hash(plaintext)
@@ -176,19 +193,28 @@ def upsert_oidc_user(
 ) -> User:
     """Just-in-time provision (or update) the app user for an OIDC login.
 
-    Resolution order:
-      1. an existing user whose ``oidc_subject`` already matches ``subject``;
-      2. else an existing **local** user with the same email (attach the
-         subject — first SSO login for a previously local/admin-created
-         account, preserving any existing password as a break-glass path);
-      3. else create a fresh OIDC-only user in the default tenant.
+    The join key is **strictly** the OIDC ``subject`` — never the ``email``
+    claim, which the IdP/attacker controls and Authlib does not verify for
+    ownership. Resolution:
 
-    On every login the ``display_name``, ``role`` (from the group→role map) and
-    ``last_login_at`` are refreshed. A password is **never** set here. Opens its
-    own transactional scope and returns the committed User; because the session
-    factory uses ``expire_on_commit=False`` the returned instance's attributes
-    stay readable after the scope closes, so the caller can set the session
-    identity from it.
+      1. If a user's ``oidc_subject`` already matches ``subject``: update
+         ``display_name``/``role`` (from the group→role map)/``last_login_at``
+         and return it.
+      2. Otherwise (subject unknown):
+
+         * If the inbound ``email`` is already owned by a different account
+           (any row with that email — its subject is ``None`` or some other
+           subject), **refuse**: raise :class:`OidcEmailConflict`. This blocks
+           account takeover by an inbound email claim (e.g. the break-glass
+           ``admin``) and avoids a ``User.email`` unique-constraint crash. No
+           row is created or modified.
+         * Else create a fresh OIDC-only user (``password_hash=None``) in the
+           default tenant.
+
+    A password is **never** set here. Opens its own transactional scope and
+    returns the committed User; because the session factory uses
+    ``expire_on_commit=False`` the returned instance's attributes stay readable
+    after the scope closes, so the caller can set the session identity from it.
     """
     role_name = Role.coerce(role).name  # raises on unknown role
     norm_email = _normalize_email(email)
@@ -196,15 +222,11 @@ def upsert_oidc_user(
         user = (
             s.query(User).filter(User.oidc_subject == subject).one_or_none()
         )
-        if user is None and norm_email:
-            # Attach the subject to a pre-existing local account (matched by
-            # email) rather than creating a duplicate.
-            existing = get_by_email(s, norm_email)
-            if existing is not None:
-                user = existing
-                user.oidc_subject = subject
-
         if user is None:
+            # Subject unknown. Do NOT match/attach by the email claim — refuse
+            # if that email is already taken by any other account, else JIT.
+            if norm_email and get_by_email(s, norm_email) is not None:
+                raise OidcEmailConflict(norm_email)
             user = User(
                 tenant_id=_default_tenant_id(s),
                 email=norm_email,
@@ -216,7 +238,7 @@ def upsert_oidc_user(
             )
             s.add(user)
         else:
-            # Refresh from the IdP on each login.
+            # Known subject — refresh from the IdP on each login.
             if display_name is not None:
                 user.display_name = display_name
             user.role = role_name

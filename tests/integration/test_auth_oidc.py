@@ -237,21 +237,114 @@ def test_callback_then_access_protected_page(oidc_app, monkeypatch):
         assert c.get("/").status_code == 200  # gate satisfied
 
 
-# ── callback: existing local user gets subject attached ───────────────────────
+# ── callback: email-claim account linking is REFUSED (hijack prevention) ──────
 
-def test_callback_attaches_subject_to_local_admin(oidc_app, monkeypatch):
-    # The break-glass admin is seeded locally with email "admin". An SSO login
-    # whose email matches an existing local account attaches the subject.
-    claims = {"sub": "idp-admin-link", "email": "admin",
-              "name": "Linked", "groups": ["admins"]}
+def test_callback_refuses_to_hijack_local_admin_via_email_claim(oidc_app, monkeypatch):
+    # SECURITY: the break-glass admin is seeded locally with email "admin". An
+    # attacker with any IdP account presenting email="admin" (an attacker-
+    # influenceable claim — Authlib does NOT verify email ownership) must be
+    # refused: the callback rejects the login with the generic OIDC error, and
+    # the local admin row is left completely untouched (no subject bound, role
+    # unchanged), so the break-glass account cannot be rewritten or taken over.
+    claims = {"sub": "idp-attacker", "email": "admin",
+              "name": "Not The Admin", "groups": ["admins"]}
     _install_fake_idp(oidc_app, monkeypatch, claims=claims)
     with oidc_app.test_client() as c:
-        c.get("/auth/callback?state=state-abc&code=xyz")
+        r = c.get("/auth/callback?state=state-abc&code=xyz")
+        assert r.status_code in (302, 303)
+        assert "/login" in r.headers["Location"]
+        assert r.status_code != 500
+        with c.session_transaction() as s:
+            assert s.get("user_id") is None  # NOT logged in
     with session_scope(oidc_app) as s:
         rows = s.query(User).filter_by(email="admin").all()
         assert len(rows) == 1  # no duplicate admin
-        assert rows[0].oidc_subject == "idp-admin-link"
-        assert rows[0].password_hash is not None  # break-glass password kept
+        admin = rows[0]
+        assert admin.oidc_subject is None  # subject NOT bound — no hijack
+        assert admin.role == Role.admin.name  # role unchanged
+        assert admin.password_hash is not None  # break-glass password kept
+        # The attacker subject was never persisted.
+        assert s.query(User).filter_by(oidc_subject="idp-attacker").count() == 0
+        # A generic login_failure with the email_conflict reason was audited;
+        # no login_success, and no email detail leaked.
+        actions = [a.action for a in s.query(AuditLog).all()]
+        assert "login_failure" in actions
+        assert "login_success" not in actions
+        failures = list(s.query(AuditLog).filter_by(action="login_failure"))
+        assert any(
+            (a.detail or {}).get("method") == "oidc"
+            and (a.detail or {}).get("reason") == "email_conflict"
+            for a in failures
+        )
+        for a in failures:
+            # The conflicting email must not be revealed in the audit detail.
+            assert "admin" not in str((a.detail or {}).get("email", ""))
+
+
+def test_callback_refuses_to_hijack_existing_oidc_user_by_email(oidc_app, monkeypatch):
+    # A privileged OIDC user already exists (subject idp-sub-001, email
+    # sso-admin@corp.local). A DIFFERENT attacker subject claiming the same
+    # email must be refused rather than rebinding or duplicating the account.
+    _install_fake_idp(oidc_app, monkeypatch, claims=_CLAIMS_ADMIN)
+    with oidc_app.test_client() as c:
+        c.get("/auth/callback?state=state-abc&code=xyz")  # provision the victim
+
+    attacker = dict(_CLAIMS_ADMIN, sub="idp-sub-attacker", name="Attacker")
+    _install_fake_idp(oidc_app, monkeypatch, claims=attacker)
+    with oidc_app.test_client() as c:
+        r = c.get("/auth/callback?state=state-abc&code=xyz")
+        assert "/login" in r.headers["Location"]
+        with c.session_transaction() as s:
+            assert s.get("user_id") is None
+    with session_scope(oidc_app) as s:
+        rows = s.query(User).filter_by(email="sso-admin@corp.local").all()
+        assert len(rows) == 1  # still exactly the victim, no duplicate
+        assert rows[0].oidc_subject == "idp-sub-001"  # unchanged
+        assert s.query(User).filter_by(oidc_subject="idp-sub-attacker").count() == 0
+
+
+def test_callback_new_subject_free_email_creates_viewer(oidc_app, monkeypatch):
+    # JIT happy path still works: a brand-new subject with an unused email and
+    # no mapped group is provisioned as a fresh viewer OIDC user.
+    claims = {"sub": "idp-fresh", "email": "fresh@corp.local",
+              "name": "Fresh User", "groups": ["random-unmapped"]}
+    _install_fake_idp(oidc_app, monkeypatch, claims=claims)
+    with oidc_app.test_client() as c:
+        r = c.get("/auth/callback?state=state-abc&code=xyz")
+        assert r.status_code in (302, 303)
+        with c.session_transaction() as s:
+            assert s.get("user_id") is not None
+            assert s.get("role") == Role.viewer.name
+    with session_scope(oidc_app) as s:
+        u = s.query(User).filter_by(oidc_subject="idp-fresh").one()
+        assert u.email == "fresh@corp.local"
+        assert u.role == Role.viewer.name
+        assert u.password_hash is None  # OIDC-only, no local password
+
+
+def test_callback_known_subject_relogs_and_remaps_role(oidc_app, monkeypatch):
+    # A known subject logs in again and its role is re-mapped from the current
+    # IdP group membership (viewer → operator here), reusing the same row.
+    first = {"sub": "idp-remap", "email": "remap@corp.local",
+             "name": "Remap", "groups": ["random-unmapped"]}
+    _install_fake_idp(oidc_app, monkeypatch, claims=first)
+    with oidc_app.test_client() as c:
+        c.get("/auth/callback?state=state-abc&code=xyz")
+    with session_scope(oidc_app) as s:
+        assert s.query(User).filter_by(oidc_subject="idp-remap").one().role \
+            == Role.viewer.name
+
+    second = dict(first, groups=["noc"])  # noc → operator per OIDC_CFG
+    _install_fake_idp(oidc_app, monkeypatch, claims=second)
+    with oidc_app.test_client() as c:
+        c.get("/auth/callback?state=state-abc&code=xyz")
+        with c.session_transaction() as sess:
+            assert sess.get("user_id") is not None
+            assert sess.get("role") == Role.operator.name
+    with session_scope(oidc_app) as s:
+        rows = s.query(User).filter_by(oidc_subject="idp-remap").all()
+        assert len(rows) == 1  # same row, no duplicate
+        assert rows[0].role == Role.operator.name
 
 
 # ── callback: error path (no leak) ────────────────────────────────────────────
