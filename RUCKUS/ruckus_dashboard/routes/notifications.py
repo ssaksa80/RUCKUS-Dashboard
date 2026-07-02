@@ -1,22 +1,37 @@
-"""Notification/report configuration API + the settings page."""
+"""Notification/report configuration API + the settings page.
+
+PB3: config is DB-backed + per-tenant. Every access goes through
+``current_app.notify_config_store`` scoped by ``g.tenant_id`` (the default
+tenant when no app user is logged in), so tenant A never reads tenant B's
+config. The display/password helpers stay pure module functions.
+"""
 from __future__ import annotations
 
 import io
 import time
 
-from flask import (Blueprint, current_app, jsonify, render_template, request,
-                   send_file, session)
+from flask import (Blueprint, current_app, g, jsonify, render_template,
+                   request, send_file, session)
 
 from ..auth.csrf import validate_csrf
 from ..infra.capability_gate import CapabilityGate
 from ..modules import MODULES, all_modules
-from ..notify.config import (display_config, load_config, save_config,
-                             smtp_password)
+from ..notify.config import display_config, smtp_password
 from ..notify.mailer import send_email
 from ..reports.collect import collect_report_model
 from ..reports.excel import build_report
 
 bp = Blueprint("notifications", __name__)
+
+
+def _tenant_id():
+    """Effective tenant for this request (None → store's default tenant)."""
+    return getattr(g, "tenant_id", None)
+
+
+def _load_cfg():
+    """Load this tenant's merged notification config from the DB store."""
+    return current_app.notify_config_store.load_config(tenant_id=_tenant_id())
 
 
 def _unauth():
@@ -37,7 +52,7 @@ def page():
 def get_config():
     if not session.get("auth"):
         return _unauth()
-    cfg = load_config(current_app.instance_path)
+    cfg = _load_cfg()
     return jsonify(display_config(cfg))
 
 
@@ -49,8 +64,8 @@ def post_config():
     incoming = request.get_json(silent=True)
     if not isinstance(incoming, dict):
         return jsonify({"error": "Invalid payload."}), 400
-    cfg = save_config(current_app.instance_path, incoming,
-                      current_app.secrets_manager)
+    cfg = current_app.notify_config_store.save_config(
+        incoming, current_app.secrets_manager, tenant_id=_tenant_id())
     return jsonify(display_config(cfg))
 
 
@@ -59,7 +74,7 @@ def test_email():
     if not session.get("auth"):
         return _unauth()
     validate_csrf()
-    cfg = load_config(current_app.instance_path)
+    cfg = _load_cfg()
     kind = str((request.get_json(silent=True) or {}).get("kind") or "smtp")
     if kind == "alerts":
         recipients = cfg["alerts"]["recipients"]
@@ -98,7 +113,7 @@ def email_report_now():
             break
     if conn is None:
         return jsonify({"error": "Connection expired.", "reauth": True}), 401
-    cfg = load_config(current_app.instance_path)
+    cfg = _load_cfg()
     try:
         model = collect_report_model(
             conn, dict(current_app.config),
@@ -199,7 +214,7 @@ def email_report_tab():
                         "error": "module unavailable on this controller"}), 422
 
     filters = _valid_filters(spec, payload.get("filters"))
-    cfg = load_config(current_app.instance_path)
+    cfg = _load_cfg()
     recipients = payload.get("recipients")
     if not (isinstance(recipients, list) and
             [r for r in recipients if isinstance(r, str) and r.strip()]):

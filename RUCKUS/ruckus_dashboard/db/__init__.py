@@ -126,6 +126,25 @@ def init_db(app) -> Engine:
     return engine
 
 
+def default_tenant_id(app) -> int:
+    """Resolve the id of the ``default`` tenant, creating it if absent.
+
+    PB3 uses this for the tenant-unaware entry points (file-state migration,
+    the scheduler with no active connection, single-tenant callers). Seeding
+    normally creates ``default`` first (id 1), but this stays correct even if
+    the row was created out of order.
+    """
+    from .models import Tenant
+
+    with session_scope(app) as s:
+        tenant = s.query(Tenant).filter_by(name="default").one_or_none()
+        if tenant is None:
+            tenant = Tenant(name="default")
+            s.add(tenant)
+            s.flush()
+        return tenant.id
+
+
 @contextmanager
 def session_scope(app) -> Iterator[Session]:
     """Transactional scope around ``app.db_session`` for out-of-request work.

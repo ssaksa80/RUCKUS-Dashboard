@@ -53,6 +53,35 @@ def _merged(stored: dict) -> dict:
     return out
 
 
+def _merge_incoming(current: dict, incoming: dict, secrets) -> dict:
+    """Deep-merge a display-shaped ``incoming`` config onto ``current``.
+
+    Section dicts are shallow-updated then run through :func:`_merged` (so
+    DEFAULTS/rules/channels behaviour is uniform). The SMTP password is
+    encrypted; the mask (or a blank/absent password) keeps the previously
+    stored secret. Returns the merged config (plaintext ``password`` stripped).
+
+    Storage-agnostic: shared by the file-based ``save_config`` and the
+    DB-backed :class:`NotificationConfigStore` so both behave identically.
+    """
+    sections = {}
+    for k, v in current.items():
+        sections[k] = dict(v) if isinstance(v, dict) else v
+    for k, v in incoming.items():
+        if isinstance(v, dict) and isinstance(sections.get(k), dict):
+            sections[k].update(v)
+        elif isinstance(v, dict):
+            sections[k] = dict(v)
+    merged = _merged(sections)
+    pw = (incoming.get("smtp") or {}).get("password")
+    if pw and pw != PASSWORD_MASK:
+        merged["smtp"]["password_enc"] = secrets.encrypt(pw)
+    else:
+        merged["smtp"]["password_enc"] = current["smtp"].get("password_enc", "")
+    merged["smtp"].pop("password", None)
+    return merged
+
+
 def load_config(instance_path: str) -> dict:
     try:
         stored = json.loads(_path(instance_path).read_text(encoding="utf-8"))
@@ -69,21 +98,7 @@ def save_config(instance_path: str, incoming: dict, secrets) -> dict:
     ``incoming["smtp"]["password"]`` (plaintext) is encrypted; the mask keeps
     the previously stored secret."""
     current = load_config(instance_path)
-    sections = {}
-    for k, v in current.items():
-        sections[k] = dict(v) if isinstance(v, dict) else v
-    for k, v in incoming.items():
-        if isinstance(v, dict) and isinstance(sections.get(k), dict):
-            sections[k].update(v)
-        elif isinstance(v, dict):
-            sections[k] = dict(v)
-    merged = _merged(sections)
-    pw = (incoming.get("smtp") or {}).get("password")
-    if pw and pw != PASSWORD_MASK:
-        merged["smtp"]["password_enc"] = secrets.encrypt(pw)
-    else:
-        merged["smtp"]["password_enc"] = current["smtp"].get("password_enc", "")
-    merged["smtp"].pop("password", None)
+    merged = _merge_incoming(current, incoming, secrets)
     path = _path(instance_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(merged, indent=1), encoding="utf-8")
@@ -110,3 +125,79 @@ def smtp_password(cfg: dict, secrets) -> str:
         return secrets.decrypt(enc)
     except Exception:  # noqa: BLE001 — key rotated/corrupt → treat as unset
         return ""
+
+
+class NotificationConfigStore:
+    """DB-backed, per-tenant notification config (PB3).
+
+    Persists one JSON blob per tenant in the ``notification_config`` table
+    instead of ``instance/notifications.json``. The config *shape* and all
+    SP2/SP7 behaviour (DEFAULTS, deep section-merge, password masking /
+    ``password_enc``, channels, outage defaults) are identical to the file
+    functions — this class only swaps the storage layer, reusing the same pure
+    helpers (:func:`_merged`, :func:`_merge_incoming`).
+
+    ``load_config`` / ``save_config`` / ``display_config`` / ``smtp_password``
+    take a ``tenant_id`` (the default tenant when unspecified) so a request can
+    pass ``g.tenant_id`` and the scheduler can pass its active connection's
+    tenant.
+    """
+
+    def __init__(self, app, default_tenant_id: int = 1) -> None:
+        self._app = app
+        self._default_tenant_id = default_tenant_id
+
+    def _tid(self, tenant_id: int | None) -> int:
+        return self._default_tenant_id if tenant_id is None else tenant_id
+
+    def _stored(self, tenant_id: int) -> dict:
+        """Raw stored blob for a tenant ({} when no row yet)."""
+        from ..db import session_scope
+        from ..db.models import NotificationConfig
+
+        with session_scope(self._app) as s:
+            row = (
+                s.query(NotificationConfig)
+                .filter(NotificationConfig.tenant_id == tenant_id)
+                .one_or_none()
+            )
+            return dict(row.config) if row and isinstance(row.config, dict) else {}
+
+    def load_config(self, tenant_id: int | None = None) -> dict:
+        """Return the merged config for a tenant (DEFAULTS when no row)."""
+        return _merged(self._stored(self._tid(tenant_id)))
+
+    def save_config(
+        self, incoming: dict, secrets, tenant_id: int | None = None
+    ) -> dict:
+        """Merge a display-shaped ``incoming`` config and persist it per tenant.
+
+        Same semantics as the file-based ``save_config``: password encrypted,
+        mask preserves the stored secret, sections deep-merged onto current.
+        """
+        from ..db import session_scope
+        from ..db.models import NotificationConfig
+
+        tid = self._tid(tenant_id)
+        current = _merged(self._stored(tid))
+        merged = _merge_incoming(current, incoming, secrets)
+        with session_scope(self._app) as s:
+            row = (
+                s.query(NotificationConfig)
+                .filter(NotificationConfig.tenant_id == tid)
+                .one_or_none()
+            )
+            if row is None:
+                s.add(NotificationConfig(tenant_id=tid, config=merged))
+            else:
+                row.config = merged
+                s.add(row)
+        return merged
+
+    @staticmethod
+    def display_config(cfg: dict) -> dict:
+        return display_config(cfg)
+
+    @staticmethod
+    def smtp_password(cfg: dict, secrets) -> str:
+        return smtp_password(cfg, secrets)
