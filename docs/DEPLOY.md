@@ -48,6 +48,37 @@ RUCKUS_INSTALL_BROWSER=n \
 
 First launch auto-generates `RUCKUS/instance/{cert.pem,key.pem,secret_key}`.
 
+## 3.1 First-boot admin & app-user auth (Phase B)
+
+App-user login is **on by default** (`RUCKUS_AUTH_REQUIRED=1`). Set the break-glass
+admin password before first launch (otherwise a random one is logged **once** to the
+log/stderr — capture it):
+
+```bash
+# RUCKUS/.env
+RUCKUS_ADMIN_PASSWORD=change-me-strong
+```
+
+First boot creates `RUCKUS/instance/ruckus.db` (SQLite) with a default tenant + the
+local `admin`. Browse to `/login`, sign in as `admin`, then connect to your
+controller. Manage accounts at `/admin/users`.
+
+**OIDC SSO (optional; on-prem IdP such as Keycloak / AD FS):**
+
+```bash
+# RUCKUS/.env
+RUCKUS_OIDC_ISSUER=https://idp.internal/realms/ruckus
+RUCKUS_OIDC_CLIENT_ID=ruckus-dashboard
+RUCKUS_OIDC_CLIENT_SECRET=...
+RUCKUS_OIDC_GROUP_ROLES=ruckus-admins:admin,noc:operator   # unmapped => viewer
+```
+
+Register the redirect URI `https://<host>/auth/callback` at the IdP. SSO stays
+**disabled** until issuer + client id + secret are all set; the local break-glass
+login always remains available (vital if the IdP is unreachable on an air-gapped
+network). Set `RUCKUS_AUTH_REQUIRED=0` for single-operator mode (controller login
+only, pre-Phase-B behavior).
+
 ## 4. Production certificate (recommended)
 
 Replace the self-signed cert with a CA-signed one:
@@ -243,12 +274,15 @@ RUCKUS/.env                       # config + FLASK_SECRET_KEY
 RUCKUS/instance/cert.pem
 RUCKUS/instance/key.pem
 RUCKUS/instance/secret_key        # session signing
-RUCKUS/instance/*fernet*          # profile-secret encryption key (if profiles used)
-RUCKUS/instance/profiles.json     # saved login profiles (if used)
+RUCKUS/instance/*fernet*          # profile/DB-secret encryption key
+RUCKUS/instance/ruckus.db         # app users, tenants, profiles, notification config, audit (Phase B)
+RUCKUS/instance/profiles.json     # legacy profiles (pre-Phase-B; now imported into ruckus.db, kept as backup)
 ```
 
 - Lose `secret_key` → existing browser sessions invalidate (operators re-login).
-- Lose the Fernet key → saved profile passwords become unreadable.
+- Lose the Fernet key → saved profile / SMTP passwords in `ruckus.db` become unreadable.
+- Lose `ruckus.db` → all app users, tenants, and config are gone; a fresh boot
+  re-seeds the break-glass `admin` (from `RUCKUS_ADMIN_PASSWORD` or a logged random).
 - Cert + key regenerate automatically if missing (self-signed).
 
 ## 11. Troubleshooting
