@@ -146,6 +146,10 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.profile_store = ProfileStore(
         app, app.secrets_manager, default_tenant_id=app.default_tenant_id
     )
+    from .notify.config import NotificationConfigStore
+    app.notify_config_store = NotificationConfigStore(
+        app, default_tenant_id=app.default_tenant_id
+    )
     # One-time import of any legacy JSON state into the DB (idempotent).
     from .db.migrate import import_file_state
     import_file_state(app, app.default_tenant_id)
