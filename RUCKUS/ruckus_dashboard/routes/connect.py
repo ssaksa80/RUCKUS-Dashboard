@@ -21,6 +21,7 @@ from flask import (
     Blueprint,
     current_app,
     flash,
+    g,
     redirect,
     request,
     session,
@@ -85,7 +86,11 @@ def connect():
     scheduler.run_in_thread()
 
     if getattr(current_app, "notify_scheduler", None) is not None:
-        current_app.notify_scheduler.set_connection(connection)
+        # PB3: capture the app-user tenant (g.tenant_id) so the daemon loads
+        # THIS tenant's notification config; None ⇒ the scheduler's default
+        # tenant (single-operator / auth-off installs).
+        current_app.notify_scheduler.set_connection(
+            connection, tenant_id=getattr(g, "tenant_id", None))
         # The daily scheduled report runs without a request/session, so seed its
         # ops here (mirrors the per-request capability gate) or gated modules
         # render disabled in the unattended run.

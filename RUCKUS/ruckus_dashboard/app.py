@@ -165,9 +165,13 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.warmup_scheduler = None
 
     from .notify.scheduler import NotifyScheduler
+    # PB3: pass the app + default tenant so the daemon loads per-tenant config
+    # from the DB (the tenant of its active connection; default when none).
     app.notify_scheduler = NotifyScheduler(app.instance_path,
                                            dict(app.config),
-                                           app.secrets_manager)
+                                           app.secrets_manager,
+                                           app=app,
+                                           default_tenant_id=app.default_tenant_id)
     app.notify_scheduler.start()
     app.inflight = InFlightDeduper()
 

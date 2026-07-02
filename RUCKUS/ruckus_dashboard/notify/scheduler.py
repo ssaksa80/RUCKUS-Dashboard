@@ -21,7 +21,7 @@ from typing import Any
 from ..modules import MODULES
 from ..reports.collect import collect_report_data  # noqa: F401  re-export (alert path)
 from .channels import CHANNELS
-from .config import load_config, smtp_password
+from .config import NotificationConfigStore, load_config, smtp_password
 from .mailer import send_email
 from .outage import DeviceStatus, OutageEngine, device_online, render_alert
 from .state_store import JsonOutageStateStore
@@ -156,11 +156,34 @@ def poor_quality_aps(clients: list[dict], ratio: float = 0.8,
 
 
 class NotifyScheduler:
+    """Background alert/report daemon.
+
+    PB3 tenant-awareness: the thread has no request context, so it cannot read
+    ``g.tenant_id``. When constructed with the Flask ``app`` it loads config
+    from the DB (:class:`NotificationConfigStore`) for the tenant of its
+    **active connection** — captured on :meth:`set_connection` from the request
+    that connected the controller. With no connection (or none captured) it uses
+    the ``default_tenant_id``. Single-node behaviour: one tenant's config at a
+    time, no multi-tenant fan-out.
+
+    When constructed WITHOUT an ``app`` (e.g. the due-logic unit tests) it falls
+    back to the file-based :func:`load_config` for backward compatibility.
+    """
+
     def __init__(self, instance_path: str, app_config: dict,
-                 secrets) -> None:
+                 secrets, app=None, default_tenant_id: int = 1) -> None:
         self._instance_path = instance_path
         self._app_config = app_config
         self._secrets = secrets
+        self._app = app
+        self._default_tenant_id = default_tenant_id
+        # The app-user tenant of the active connection (None ⇒ default tenant).
+        self._tenant_id: int | None = None
+        self._config_store = (
+            NotificationConfigStore(app, default_tenant_id=default_tenant_id)
+            if app is not None
+            else None
+        )
         self._connection = None
         self._available_ops: set = set()
         self._lock = threading.Lock()
@@ -179,9 +202,16 @@ class NotifyScheduler:
     def stop(self) -> None:
         self._stop.set()
 
-    def set_connection(self, connection) -> None:
+    def set_connection(self, connection, tenant_id: int | None = None) -> None:
+        """Bind the active controller connection and its owning app-user tenant.
+
+        ``tenant_id`` is the *app-user* tenant (``g.tenant_id`` at /connect),
+        NOT the controller's tenant string. It selects which tenant's config
+        the daemon loads; ``None`` ⇒ the default tenant.
+        """
         with self._lock:
             self._connection = connection
+            self._tenant_id = tenant_id
         # SP2: do NOT null committed state — the store is the source of truth.
         # A reconnect must not re-baseline (audit #4 fix).
 
@@ -192,6 +222,24 @@ class NotifyScheduler:
     def clear_connection(self) -> None:
         with self._lock:
             self._connection = None
+            self._tenant_id = None
+
+    def _load_config(self) -> dict:
+        """Load the effective config: DB per-tenant when wired, else the file.
+
+        DB path uses the active connection's captured tenant (or the default
+        tenant). If the DB read fails for any reason, fall back to the file so a
+        transient DB hiccup never silently disables alerting.
+        """
+        if self._config_store is not None:
+            with self._lock:
+                tid = self._tenant_id
+            try:
+                return self._config_store.load_config(tenant_id=tid)
+            except Exception:  # noqa: BLE001 - never let a DB hiccup kill a tick
+                LOG.warning("notify: DB config load failed; using file config",
+                            exc_info=True)
+        return load_config(self._instance_path)
 
     # ── due logic (unit-tested) ──────────────────────────────────────────
     def _alerts_due(self, cfg: dict, now: float) -> bool:
@@ -234,7 +282,7 @@ class NotifyScheduler:
             connection = self._connection
         if connection is None:
             return
-        cfg = load_config(self._instance_path)
+        cfg = self._load_config()
         now = time.time()
 
         if self._alerts_due(cfg, now):
