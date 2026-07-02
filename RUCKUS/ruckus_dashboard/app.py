@@ -136,6 +136,13 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     init_db(app)
     seed_identity(app)
     app.login_rate_limiter = LoginRateLimiter()
+
+    # ── Phase B (PB2): OIDC SSO client (alongside local break-glass) ─────────
+    # Registers one "oidc" provider from RUCKUS_OIDC_* config; a no-op when the
+    # issuer/client aren't fully set (local-only, air-gapped default). Safe to
+    # call unconditionally — register() is lazy (no discovery fetch until used).
+    from .auth.oidc import init_oidc
+    init_oidc(app)
     app.config["RUCKUS_HOST_ALLOWLIST"] = HostAllowList(app.config.get("RUCKUS_ALLOWED_HOSTS", ""))
     app.module_cache = ModuleResultCache()
     app.warmup_scheduler = None

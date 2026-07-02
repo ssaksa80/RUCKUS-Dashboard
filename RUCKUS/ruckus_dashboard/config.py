@@ -58,6 +58,21 @@ def build_config(instance_path: str) -> dict:
         # site can set RUCKUS_AUTH_REQUIRED=0 to preserve pre-PhaseB behavior;
         # the test app factory also defaults it OFF (see create_app).
         "RUCKUS_AUTH_REQUIRED": _bool_env("RUCKUS_AUTH_REQUIRED", True),
+        # ─── Phase B OIDC SSO (PB2) ──────────────────────────────
+        # OIDC against an on-prem/air-gapped IdP, alongside the local break-glass
+        # login. OIDC is enabled ONLY when issuer + client id + secret are all
+        # set (see auth.oidc.oidc_enabled); otherwise the app stays local-only —
+        # it never half-enables. ISSUER is the base URL; Authlib discovers via
+        # ``{issuer}/.well-known/openid-configuration``.
+        "RUCKUS_OIDC_ISSUER": os.getenv("RUCKUS_OIDC_ISSUER", ""),
+        "RUCKUS_OIDC_CLIENT_ID": os.getenv("RUCKUS_OIDC_CLIENT_ID", ""),
+        "RUCKUS_OIDC_CLIENT_SECRET": os.getenv("RUCKUS_OIDC_CLIENT_SECRET", ""),
+        "RUCKUS_OIDC_SCOPES": os.getenv("RUCKUS_OIDC_SCOPES", "openid email profile"),
+        # Which id_token/userinfo claim carries the user's groups.
+        "RUCKUS_OIDC_GROUPS_CLAIM": os.getenv("RUCKUS_OIDC_GROUPS_CLAIM", "groups"),
+        # Group→role map, e.g. "admins:admin,noc:operator". Unmapped / no-group
+        # users default to viewer (see auth.oidc.map_groups_to_role).
+        "RUCKUS_OIDC_GROUP_ROLES": os.getenv("RUCKUS_OIDC_GROUP_ROLES", ""),
         # ─── NEW UI shell ────────────────────────────────────────
         "RUCKUS_ENABLE_NEW_UI": _bool_env("RUCKUS_ENABLE_NEW_UI", False),
         "RUCKUS_MAX_INFLIGHT_PER_MODULE": _int_env("RUCKUS_MAX_INFLIGHT_PER_MODULE", 1),
