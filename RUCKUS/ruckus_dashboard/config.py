@@ -75,6 +75,10 @@ def build_config(instance_path: str) -> dict:
         "RUCKUS_OIDC_GROUP_ROLES": os.getenv("RUCKUS_OIDC_GROUP_ROLES", ""),
         # ─── NEW UI shell ────────────────────────────────────────
         "RUCKUS_ENABLE_NEW_UI": _bool_env("RUCKUS_ENABLE_NEW_UI", False),
+        # Front-end refresh (design-token/theme layer + modernized Overview).
+        # Purely presentational and flag-gated: OFF (default) renders exactly
+        # as today; ON adds body[data-ui="modern"] so the modern skin activates.
+        "RUCKUS_MODERN_UI": _bool_env("RUCKUS_MODERN_UI", False),
         "RUCKUS_MAX_INFLIGHT_PER_MODULE": _int_env("RUCKUS_MAX_INFLIGHT_PER_MODULE", 1),
         "RUCKUS_WARMUP_WORKERS": _int_env("RUCKUS_WARMUP_WORKERS", 4),
         "RUCKUS_WARMUP_TIMEOUT": _float_env("RUCKUS_WARMUP_TIMEOUT", 30.0),

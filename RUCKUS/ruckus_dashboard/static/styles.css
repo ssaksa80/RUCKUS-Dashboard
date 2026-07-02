@@ -16,7 +16,55 @@
   --motion-slow: 1.6s;
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
   --pulse-critical-period: 1.4s; /* matches the existing topo-pulse cadence */
+
+  /* ── UI-refresh design tokens (consolidated) ─────────────────────────────
+     Presentational only; consumed exclusively by the modern skin scoped under
+     body[data-ui="modern"]. Role colors alias the existing state hues so there
+     is one source of truth (success=--ok, warning=--watch, danger=--critical,
+     accent=--accent) and health stays the only saturated color. The SP5 glow +
+     motion tokens above are REUSED (not duplicated) by the modern skin. */
+  --role-success: var(--ok);
+  --role-warning: var(--watch);
+  --role-danger: var(--critical);
+  --role-accent: var(--accent);
+  /* Modern surface ramp (dark NOC baseline). Named so the desk theme can
+     re-point them without touching any rule. */
+  --surface-1: var(--surface);       /* card / panel */
+  --surface-2: var(--surface-soft);  /* raised / hover */
+  --surface-0: var(--bg);            /* app canvas */
+  --text-1: var(--text);
+  --text-2: var(--muted);
+  --border-1: var(--border);
+  /* Radius scale */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+  /* Spacing scale (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  /* System-ui font stack — same-origin/system only (CSP-safe: no CDN). Drop a
+     self-hosted static/fonts/ui.woff2 to activate the @font-face below. */
+  --font-ui: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
+
+/* Self-hosted UI font hook (OPT-IN, CSP-safe). This @font-face is intentionally
+   commented out so no missing-binary 404 occurs by default; the modern skin
+   uses the system-ui stack (--font-ui). To activate a self-hosted face, drop a
+   same-origin static/fonts/ui.woff2 (see static/fonts/README.md), uncomment the
+   block, and prepend "UIFont" to --font-ui. Same-origin url() keeps CSP at
+   script-src/style-src 'self' — do NOT reference a CDN or Google Fonts.
+@font-face {
+  font-family: "UIFont";
+  src: url("fonts/ui.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+*/
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
        font-family: Arial, Helvetica, sans-serif; }
@@ -338,10 +386,17 @@ body.dso-mode .topo-ribbon .rib-item b{font-size:2rem}
   .tile,
   .module-refreshed::after,
   .value-changed,
-  .warmup-fill::after {
+  .warmup-fill::after,
+  /* UI-refresh modern skin: flatten the added hover/reveal transitions too. */
+  body[data-ui="modern"] .tile,
+  body[data-ui="modern"] .nav-item,
+  body[data-ui="modern"] .health-chip,
+  body[data-ui="modern"] .status-ribbon b {
     animation: none !important;
     transition: none !important;
   }
+  /* Neutralize the tile lift so reduced-motion users get no transform jump. */
+  body[data-ui="modern"] .tile:hover { transform: none; }
   /* Preserve SP4's static-pulse reset so a flagged node still reads clearly. */
   .topo-node.pulse > circle { stroke-opacity: 1; }
 }
@@ -442,3 +497,163 @@ body.dso-mode .kpi-card.watch .kpi-value {
   text-shadow: 0 0 18px var(--glow-watch);
 }
 body.dso-mode .health-chip.danger { box-shadow: 0 0 16px var(--glow-critical); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   UI REFRESH — modern skin (slice 1: token layer + Overview)
+   EVERY rule below is scoped under body[data-ui="modern"] so the legacy look
+   (flag OFF) is byte-for-byte unchanged. Flat, dark NOC by default; health is
+   the only saturated color; metrics use tabular-nums. An optional lighter
+   "desk" theme re-points the surface/text tokens at the end of this section.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Type + app shell ──────────────────────────────────────────────────── */
+body[data-ui="modern"] {
+  font-family: var(--font-ui);
+  background: var(--surface-0);
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: 0.005em;
+}
+body[data-ui="modern"] .main { padding: var(--space-5) var(--space-6); }
+body[data-ui="modern"] .sidebar {
+  background: var(--surface-0);
+  border-right: 1px solid var(--border-1);
+}
+body[data-ui="modern"] .brand-title { letter-spacing: 0.02em; }
+body[data-ui="modern"] .nav-item {
+  border-radius: var(--radius-sm);
+  margin: 1px var(--space-2);
+  transition: background var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+body[data-ui="modern"] .nav-item.active {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--role-accent);
+}
+body[data-ui="modern"] .topbar {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-1);
+}
+body[data-ui="modern"] .breadcrumb {
+  font-weight: 700; letter-spacing: 0.02em; color: var(--text-2);
+}
+
+/* ── Cards / KPI / metric cards ────────────────────────────────────────── */
+body[data-ui="modern"] .tile,
+body[data-ui="modern"] .kpi-card,
+body[data-ui="modern"] .item-card,
+body[data-ui="modern"] .notif-card,
+body[data-ui="modern"] .data-area,
+body[data-ui="modern"] .drill-hero,
+body[data-ui="modern"] .drill-body {
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius);
+}
+body[data-ui="modern"] .tile {
+  padding: var(--space-4);
+  transition: border-color var(--motion-fast) var(--ease-out),
+              transform var(--motion-fast) var(--ease-out);
+}
+body[data-ui="modern"] .tile:hover {
+  border-color: var(--role-accent);
+  transform: translateY(-1px);
+}
+body[data-ui="modern"] .tile-title,
+body[data-ui="modern"] .kpi-label {
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}
+/* Metrics: tabular figures so counts don't jitter as they count up. */
+body[data-ui="modern"] .tile-value,
+body[data-ui="modern"] .kpi-value,
+body[data-ui="modern"] .status-ribbon b,
+body[data-ui="modern"] .health-chip .hc-value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ── Status pills (flat, role-tinted) ──────────────────────────────────── */
+body[data-ui="modern"] .status-pill {
+  border: 1px solid transparent;
+  letter-spacing: 0.04em;
+  padding: 2px 10px;
+}
+body[data-ui="modern"] .status-complete,
+body[data-ui="modern"] .status-pill.status-online {
+  background: color-mix(in srgb, var(--role-success) 16%, transparent);
+  color: var(--role-success);
+  border-color: color-mix(in srgb, var(--role-success) 40%, transparent);
+}
+body[data-ui="modern"] .status-partial,
+body[data-ui="modern"] .status-pill.status-flagged {
+  background: color-mix(in srgb, var(--role-warning) 16%, transparent);
+  color: var(--role-warning);
+  border-color: color-mix(in srgb, var(--role-warning) 40%, transparent);
+}
+body[data-ui="modern"] .status-error,
+body[data-ui="modern"] .status-pill.status-offline {
+  background: color-mix(in srgb, var(--role-danger) 16%, transparent);
+  color: var(--role-danger);
+  border-color: color-mix(in srgb, var(--role-danger) 40%, transparent);
+}
+
+/* ── Overview status ribbon (Demo-1 style) ─────────────────────────────── */
+/* Inert in legacy via the `hidden` attribute; the modern skin reveals it. */
+body[data-ui="modern"] .status-ribbon[hidden] { display: flex; }
+body[data-ui="modern"] .status-ribbon {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  align-items: baseline;
+  padding: var(--space-3) var(--space-4);
+  margin: 0 0 var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text-2);
+}
+body[data-ui="modern"] .status-ribbon .sr-item {
+  display: inline-flex; align-items: baseline; gap: var(--space-2);
+  text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px;
+}
+body[data-ui="modern"] .status-ribbon b {
+  font-size: 26px; font-weight: 800; line-height: 1; color: var(--text-1);
+}
+body[data-ui="modern"] .status-ribbon .sr-online b { color: var(--role-success); }
+body[data-ui="modern"] .status-ribbon .sr-flagged b { color: var(--role-warning); }
+body[data-ui="modern"] .status-ribbon .sr-offline b { color: var(--role-danger); }
+body[data-ui="modern"] .status-ribbon .sr-alarms b { color: var(--role-accent); }
+
+/* ── Fleet-health bar (the persistent shell health strip, modernized) ──── */
+body[data-ui="modern"] .health-bar {
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-1);
+  border-radius: var(--radius);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-4);
+}
+body[data-ui="modern"] .health-chip {
+  border-radius: var(--radius-pill);
+  border-color: var(--border-1);
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+body[data-ui="modern"] .overview h1 {
+  font-size: 22px; letter-spacing: 0.01em; margin-bottom: var(--space-1);
+}
+body[data-ui="modern"] .overview .subtitle { color: var(--text-2); }
+
+/* ── Optional lighter "desk" theme — re-point tokens only, no new rules ── */
+body[data-ui="modern"][data-theme="desk"] {
+  color-scheme: light;
+  --surface-0: #eef1f4;
+  --surface-1: #ffffff;
+  --surface-2: #f4f6f9;
+  --text-1: #16202b;
+  --text-2: #5a6b7b;
+  --border-1: #d4dbe3;
+}
