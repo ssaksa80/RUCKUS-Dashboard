@@ -34,6 +34,11 @@ data appears without clicking.
 - **Wall-display polish** — CSS glow + a tiny same-origin motion layer (count-up
   KPIs, health-state glow, live refresh pulse); `prefers-reduced-motion` aware and
   CSP-safe (no third-party scripts).
+- **Multi-user + SSO + RBAC** — app-user accounts with roles (viewer / operator /
+  admin), **OIDC single sign-on** against an on-prem IdP plus a local break-glass
+  admin, per-tenant isolation, and an audit log — a login layer in front of the
+  controller connection. SQLite-backed, no extra services. Toggle with
+  `RUCKUS_AUTH_REQUIRED` (single-operator sites can leave it off).
 - **Read-only** — observes the controller, never writes config.
 - **Two platforms** — SmartZone service-ticket auth + RUCKUS One OAuth2.
 - **Security-first** — self-signed HTTPS out of the box; an SSRF allow-list that
@@ -99,9 +104,43 @@ All settings are environment variables (the installer writes them to
 | `RUCKUS_WARMUP_TIMEOUT` | `30` | Per-module warmup timeout (seconds) |
 | `RUCKUS_DPAPI_SCOPE` | `machine` | Windows secret-at-rest scope: `machine` (any local user can decrypt) or `user` (current account only) |
 | `FLASK_SECRET_KEY` | _(auto)_ | Session signing key (installer generates one) |
+| **App users / SSO (Phase B)** | | |
+| `RUCKUS_AUTH_REQUIRED` | `1` | Require an app-user login. `0` = single-operator mode (controller login only, pre-Phase-B behavior). |
+| `RUCKUS_ADMIN_PASSWORD` | _(auto)_ | First-boot break-glass admin password; if unset, a random one is logged **once** at startup. |
+| `RUCKUS_DATABASE_URL` | `sqlite:///<instance>/ruckus.db` | App DB (users, tenants, profiles, notification config, audit). SQLAlchemy URL — swaps to Postgres if ever needed. |
+| `RUCKUS_OIDC_ISSUER` | _(empty)_ | OIDC issuer base URL (on-prem IdP). SSO stays **off** unless issuer + client id + secret are all set. |
+| `RUCKUS_OIDC_CLIENT_ID` / `RUCKUS_OIDC_CLIENT_SECRET` | _(empty)_ | OIDC client credentials. |
+| `RUCKUS_OIDC_SCOPES` | `openid email profile` | OIDC scopes requested. |
+| `RUCKUS_OIDC_GROUPS_CLAIM` | `groups` | ID-token/userinfo claim carrying the user's groups. |
+| `RUCKUS_OIDC_GROUP_ROLES` | _(empty)_ | Group→role map, e.g. `admins:admin,noc:operator`. Unmapped users default to `viewer`. |
 
 CLI flags override env: `--bind`, `--port`, `--smartzone-port`,
-`--allowed-hosts`, `--no-browser`, `--no-auto-port`, `--debug`, `--version`.
+`--allowed-hosts`, `--no-browser`, `--no-auto-port`, `--server {werkzeug,waitress}`,
+`--debug`, `--version`.
+
+## Users & access (Phase B)
+
+Access is **two layers**:
+
+1. **App-user login** (who the operator is) — a local username/password or **OIDC
+   SSO**, gated by `RUCKUS_AUTH_REQUIRED` (on by default).
+2. **Controller connection** (which RUCKUS controller) — the existing SmartZone /
+   RUCKUS One login, now owned by the logged-in user.
+
+- **First boot** seeds a **break-glass local admin** (`admin`). Set
+  `RUCKUS_ADMIN_PASSWORD` before first launch, or read the one-time random password
+  logged at startup. The local login always works even if the IdP is unreachable —
+  essential on an air-gapped box.
+- **OIDC SSO** is opt-in: set `RUCKUS_OIDC_ISSUER` + client id/secret (an on-prem
+  IdP such as Keycloak / AD FS). Users are provisioned on first sign-in; their role
+  comes from `RUCKUS_OIDC_GROUP_ROLES` (default `viewer`).
+- **Roles:** `viewer` (read dashboards) < `operator` (+ manage own connections /
+  notifications / reports) < `admin` (+ users, global config, audit). Admins manage
+  accounts at `/admin/users`.
+- **Multi-tenant:** every profile, notification config, and audit row is scoped to a
+  tenant; single-site installs just run one default tenant transparently.
+- **Single-operator mode:** set `RUCKUS_AUTH_REQUIRED=0` to skip app-user login
+  entirely and keep the pre-Phase-B behavior (controller login only).
 
 ## Architecture
 
@@ -110,7 +149,8 @@ Installable package `ruckus_dashboard/`:
 ```
 ruckus_dashboard/
 ├── app.py / cli.py / config.py / certs.py / logging_setup.py
-├── auth/        session store, secrets (Fernet+DPAPI), profiles, CSRF
+├── auth/        app users (argon2) + RBAC + OIDC SSO, session store, secrets (Fernet+DPAPI), profiles, CSRF, audit
+├── db/          SQLAlchemy models (users/tenants/audit/profiles/notify config) + SQLite engine + first-boot migration
 ├── net/         SSRF allow-list, port scanner
 ├── clients/     smartzone, switchm, ruckus_one, capabilities (OpenAPI discovery)
 ├── infra/       cache, envelope, capability_gate/registry, inflight, warmup, parallel_fetch
@@ -118,7 +158,7 @@ ruckus_dashboard/
 ├── security/    CISA KEV + NVD CVE validator
 ├── notify/      outage engine, durable state store, e-mail channels, scheduler
 ├── reports/     report model + generic collector, Excel renderer
-├── routes/      pages, modules API, connect/logout, warmup SSE, notifications, topology layout
+├── routes/      pages, modules API, connect/logout, warmup SSE, notifications, topology layout, auth (login/SSO/admin users)
 ├── templates/   sidebar shell + per-module page + partials
 └── static/      styles.css, dashboard.js, motion.js, topology.js, logo
 ```
@@ -155,8 +195,14 @@ upgrades, and backup.
   cannot see or clear another's capability gating.
 - On Windows, secrets at rest are DPAPI-wrapped; set `RUCKUS_DPAPI_SCOPE=user` to
   scope them to the current account instead of the whole machine.
-- `RUCKUS/instance/` holds the generated cert, session key, and encrypted
-  profile/notification blobs — back it up, never commit it (already in `.gitignore`).
+- **App-user auth (Phase B):** passwords are argon2id-hashed (never stored
+  plaintext); login rate-limited + audited; OIDC tokens validated by the IdP (no
+  hand-rolled JWT) and never linked to an existing account by an unverified email
+  claim. Keep `RUCKUS_ADMIN_PASSWORD` secret and change the seeded admin password.
+- `RUCKUS/instance/` holds the generated cert, session key, encrypted
+  profile/notification blobs, and the app DB (`ruckus.db` — users/tenants/config/
+  audit, secrets encrypted within it). Back it up, never commit it (already in
+  `.gitignore`).
 - Read-only by design: no controller configuration is ever modified.
 
 ## License
