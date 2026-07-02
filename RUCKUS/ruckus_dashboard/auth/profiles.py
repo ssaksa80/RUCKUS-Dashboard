@@ -1,21 +1,24 @@
 """Connection profiles — save/load/delete; passwords/secrets encrypted at rest.
 
-Ported verbatim from RUCKUS/ruckus_dashboard.py lines 2715-2802 (ProfileStore)
-along with the supporting constants ``PROFILE_PLAIN_FIELDS``,
-``PROFILE_SECRET_FIELDS`` (monolith lines 2698-2712), and ``_PROFILE_PW_SENTINEL``
-(monolith line 2565).
+PB3: DB-backed + tenant-scoped. Profiles now live in the ``profiles`` table
+(migrated off ``instance/profiles.json``) rather than a JSON file. Every method
+operates within a ``tenant_id`` so tenant A can never see, resolve, or delete
+tenant B's rows. Secrets are still Fernet-encrypted via ``SecretsManager`` — the
+DB stores ciphertext (``enc_secret_fields``), never plaintext.
+
+The plain/secret field split and the ``_PROFILE_PW_SENTINEL`` (UI "unchanged"
+marker) behaviour are preserved verbatim from the file-based implementation
+(monolith lines 2565, 2698-2802); only the storage layer changed.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import threading
 import time
-from pathlib import Path
 from typing import Any
 
+from ..db import session_scope
+from ..db.models import Profile
 from .secrets import SecretsManager
 
 
@@ -46,91 +49,132 @@ def _format_now() -> str:
 
 
 class ProfileStore:
-    def __init__(self, instance_path: str, secrets_manager: SecretsManager) -> None:
-        self.path = Path(instance_path) / "profiles.json"
+    """Tenant-scoped, DB-backed store for controller-connection profiles.
+
+    Constructed with the Flask ``app`` (for the scoped DB session) and the
+    app's ``SecretsManager``. ``default_tenant_id`` is used when a caller does
+    not pass an explicit ``tenant_id`` (single-tenant installs / startup work).
+    """
+
+    def __init__(
+        self,
+        app,
+        secrets_manager: SecretsManager,
+        default_tenant_id: int = 1,
+    ) -> None:
+        self._app = app
         self.secrets = secrets_manager
-        self._lock = threading.Lock()
+        self._default_tenant_id = default_tenant_id
 
-    def _load(self) -> dict[str, Any]:
-        try:
-            if self.path.exists():
-                data = json.loads(self.path.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    return data
-        except (OSError, json.JSONDecodeError):
-            pass
-        return {}
+    def _tid(self, tenant_id: int | None) -> int:
+        return self._default_tenant_id if tenant_id is None else tenant_id
 
-    def _write(self, profiles: dict[str, Any]) -> None:
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
-            data = json.dumps(profiles, separators=(",", ":"))
-            _binary = getattr(os, "O_BINARY", 0)  # Windows: prevent \n→\r\n translation
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _binary, 0o600)
-            try:
-                os.write(fd, data.encode("utf-8"))
-            finally:
-                os.close(fd)
-            tmp.replace(self.path)
-            try:
-                self.path.chmod(0o600)
-            except OSError:
-                pass
-        except OSError as exc:
-            LOG.warning(f"Could not persist profiles: {exc}")
-
-    def list_masked(self) -> list[dict[str, Any]]:
-        with self._lock:
-            profiles = self._load()
-        result = []
-        for name, prof in sorted(profiles.items()):
-            masked = {"name": name}
-            for field in PROFILE_PLAIN_FIELDS:
-                if field in prof:
-                    masked[field] = prof[field]
-            masked["has_secret"] = any(prof.get(enc) for enc in PROFILE_SECRET_FIELDS.values())
-            masked["saved_at"] = prof.get("saved_at", "")
-            result.append(masked)
+    def list_masked(self, tenant_id: int | None = None) -> list[dict[str, Any]]:
+        tid = self._tid(tenant_id)
+        with session_scope(self._app) as s:
+            rows = (
+                s.query(Profile)
+                .filter(Profile.tenant_id == tid)
+                .order_by(Profile.name)
+                .all()
+            )
+            result = []
+            for row in rows:
+                plain = row.plain_fields or {}
+                enc = row.enc_secret_fields or {}
+                masked: dict[str, Any] = {"name": row.name}
+                for field in PROFILE_PLAIN_FIELDS:
+                    if field in plain:
+                        masked[field] = plain[field]
+                masked["has_secret"] = any(
+                    enc.get(ef) for ef in PROFILE_SECRET_FIELDS.values()
+                )
+                masked["saved_at"] = (
+                    row.saved_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+                    if row.saved_at
+                    else ""
+                )
+                result.append(masked)
         return result
 
-    def save(self, name: str, form: dict[str, Any]) -> None:
+    def save(
+        self, name: str, form: dict[str, Any], tenant_id: int | None = None
+    ) -> None:
         name = name.strip()
         if not name:
             raise ValueError("Profile name is required.")
-        record: dict[str, Any] = {"saved_at": _format_now()}
+        tid = self._tid(tenant_id)
+
+        plain: dict[str, Any] = {}
         for field in PROFILE_PLAIN_FIELDS:
             value = form.get(field)
             if value not in (None, ""):
-                record[field] = value
+                plain[field] = value
+        enc: dict[str, Any] = {}
         for plain_field, enc_field in PROFILE_SECRET_FIELDS.items():
             secret = form.get(plain_field) or ""
             if secret and secret != _PROFILE_PW_SENTINEL:
-                record[enc_field] = self.secrets.encrypt(secret)
-        with self._lock:
-            profiles = self._load()
-            # Preserve an existing encrypted secret when the form left it untouched.
-            existing = profiles.get(name, {})
+                enc[enc_field] = self.secrets.encrypt(secret)
+
+        with session_scope(self._app) as s:
+            row = (
+                s.query(Profile)
+                .filter(Profile.tenant_id == tid, Profile.name == name)
+                .one_or_none()
+            )
+            # Preserve an existing encrypted secret when the form left it
+            # untouched (sentinel / blank), matching the file-based behaviour.
+            existing_enc = dict(row.enc_secret_fields or {}) if row else {}
             for enc_field in PROFILE_SECRET_FIELDS.values():
-                if enc_field not in record and existing.get(enc_field):
-                    record[enc_field] = existing[enc_field]
-            profiles[name] = record
-            self._write(profiles)
+                if enc_field not in enc and existing_enc.get(enc_field):
+                    enc[enc_field] = existing_enc[enc_field]
 
-    def delete(self, name: str) -> None:
-        with self._lock:
-            profiles = self._load()
-            if profiles.pop(name, None) is not None:
-                self._write(profiles)
+            from ..db.models import _utcnow
 
-    def resolve_secret(self, name: str, plain_field: str) -> str:
+            if row is None:
+                s.add(
+                    Profile(
+                        tenant_id=tid,
+                        name=name,
+                        plain_fields=plain,
+                        enc_secret_fields=enc,
+                        saved_at=_utcnow(),
+                    )
+                )
+            else:
+                row.plain_fields = plain
+                row.enc_secret_fields = enc
+                row.saved_at = _utcnow()
+                s.add(row)
+
+    def delete(self, name: str, tenant_id: int | None = None) -> None:
+        tid = self._tid(tenant_id)
+        with session_scope(self._app) as s:
+            row = (
+                s.query(Profile)
+                .filter(Profile.tenant_id == tid, Profile.name == name)
+                .one_or_none()
+            )
+            if row is not None:
+                s.delete(row)
+
+    def resolve_secret(
+        self, name: str, plain_field: str, tenant_id: int | None = None
+    ) -> str:
         enc_field = PROFILE_SECRET_FIELDS.get(plain_field)
         if not enc_field:
             return ""
-        with self._lock:
-            prof = self._load().get(name, {})
-        return self.secrets.decrypt(prof.get(enc_field, ""))
+        tid = self._tid(tenant_id)
+        with session_scope(self._app) as s:
+            row = (
+                s.query(Profile)
+                .filter(Profile.tenant_id == tid, Profile.name == name)
+                .one_or_none()
+            )
+            enc = (row.enc_secret_fields or {}).get(enc_field, "") if row else ""
+        return self.secrets.decrypt(enc)
 
-    def count(self) -> int:
-        with self._lock:
-            return len(self._load())
+    def count(self, tenant_id: int | None = None) -> int:
+        tid = self._tid(tenant_id)
+        with session_scope(self._app) as s:
+            return s.query(Profile).filter(Profile.tenant_id == tid).count()

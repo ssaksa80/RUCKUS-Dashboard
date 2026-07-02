@@ -125,17 +125,30 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         on_evict=app.capability_registry.clear,
     )
     app.secrets_manager = SecretsManager(app.instance_path)
-    app.profile_store = ProfileStore(app.instance_path, app.secrets_manager)
 
     # ── Phase B (PB1): identity persistence + break-glass admin ──────────────
     # DB engine/scoped-session onto the app, schema via create_all, then seed a
     # default tenant + break-glass admin. In-memory URL under test (see above).
-    from .db import init_db
+    from .db import init_db, default_tenant_id
     from .routes.auth import seed_identity
     from .auth.ratelimit import LoginRateLimiter
     init_db(app)
     seed_identity(app)
+    # Resolve the default tenant id once (PB3): the file-based state migrated
+    # into the DB, and any tenant-unaware caller, lands under this tenant.
+    app.default_tenant_id = default_tenant_id(app)
     app.login_rate_limiter = LoginRateLimiter()
+
+    # ── Phase B (PB3): DB-backed, tenant-scoped connection profiles ──────────
+    # Profiles now live in the DB (migrated off profiles.json); the store is
+    # constructed after the default tenant exists so tenant-unaware callers
+    # resolve to it.
+    app.profile_store = ProfileStore(
+        app, app.secrets_manager, default_tenant_id=app.default_tenant_id
+    )
+    # One-time import of any legacy JSON state into the DB (idempotent).
+    from .db.migrate import import_file_state
+    import_file_state(app, app.default_tenant_id)
 
     # ── Phase B (PB2): OIDC SSO client (alongside local break-glass) ─────────
     # Registers one "oidc" provider from RUCKUS_OIDC_* config; a no-op when the
