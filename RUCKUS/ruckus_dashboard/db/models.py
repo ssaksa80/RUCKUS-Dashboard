@@ -131,3 +131,54 @@ class AuditLog(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         return f"<AuditLog {self.id} {self.action!r} user={self.user_id}>"
+
+
+class Profile(Base):
+    """A saved controller-connection profile (migrated from ``profiles.json``).
+
+    ``plain_fields`` holds the non-secret form fields (host, username, …).
+    ``enc_secret_fields`` holds the *Fernet ciphertext* of each secret keyed by
+    its internal enc-field name (e.g. ``_enc_smartzone_password``) — plaintext
+    is NEVER stored. Unique per ``(tenant_id, name)`` so a name is stable within
+    a tenant but two tenants may reuse the same name.
+    """
+
+    __tablename__ = "profiles"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_profiles_tenant_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    plain_fields: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    enc_secret_fields: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    saved_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=_utcnow, nullable=False
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return f"<Profile {self.id} tenant={self.tenant_id} {self.name!r}>"
+
+
+class NotificationConfig(Base):
+    """Per-tenant notification/report config (migrated from ``notifications.json``).
+
+    One row per tenant — ``tenant_id`` is the primary key. ``config`` is the
+    full merged config blob (same shape as the file-based config), with the SMTP
+    password held as Fernet ciphertext under ``smtp.password_enc``.
+    """
+
+    __tablename__ = "notification_config"
+
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id"), primary_key=True
+    )
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return f"<NotificationConfig tenant={self.tenant_id}>"
