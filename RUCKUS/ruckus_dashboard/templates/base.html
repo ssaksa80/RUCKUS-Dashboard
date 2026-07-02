@@ -7,7 +7,9 @@
 <meta name="csrf-token" content="{{ csrf_token }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
-<body class="{% block body_class %}{% endblock %}">
+<body class="{% block body_class %}{% endblock %}"
+      data-ui="{{ 'modern' if config.get('RUCKUS_MODERN_UI') else 'legacy' }}"
+      data-theme="noc">
 <div class="layout">
   <aside class="sidebar" aria-label="modules">
     <div class="brand">

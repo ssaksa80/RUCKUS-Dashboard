@@ -4,6 +4,15 @@
 {% block breadcrumb %}DSO Overview{% endblock %}
 {% block content %}
 {% include "partials/warmup_strip.html" %}
+{# Status ribbon — inert/hidden in legacy (the `hidden` attr), revealed by the
+   modern skin (body[data-ui="modern"]). Populated by the existing warmup SSE
+   flow in dashboard.js from the same tile data; no new data source. #}
+<div class="status-ribbon" data-status-ribbon hidden>
+  <span class="sr-item sr-online"><b data-ribbon="online">–</b> Online</span>
+  <span class="sr-item sr-flagged"><b data-ribbon="flagged">–</b> Flagged</span>
+  <span class="sr-item sr-offline"><b data-ribbon="offline">–</b> Offline</span>
+  <span class="sr-item sr-alarms"><b data-ribbon="alarms">–</b> Alarms</span>
+</div>
 <section class="overview">
   <h1>DSO Overview</h1>
   <p class="subtitle">Live service-health rollup. Click any tile to drill in.</p>

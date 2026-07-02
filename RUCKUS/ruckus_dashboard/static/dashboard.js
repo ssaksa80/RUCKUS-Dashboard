@@ -886,6 +886,31 @@ function showErrorBanner(msg) {
   if (eb) { eb.hidden = false; eb.textContent = msg; }
 }
 
+// Modern-UI status ribbon (Overview). Fed by the SAME warmup SSE payloads as
+// the tiles — no new data source. Reads AP online/flagged/offline off the `aps`
+// summary and the alarm total off the `alarms` summary. Inert (element `hidden`)
+// unless the modern skin reveals it, so legacy is unaffected.
+function updateStatusRibbon(payload) {
+  const ribbon = document.querySelector("[data-status-ribbon]");
+  if (!ribbon) return;
+  const s = payload.summary || {};
+  const set = (key, val) => {
+    const el = ribbon.querySelector(`[data-ribbon="${key}"]`);
+    if (!el || val == null) return;
+    const num = Number(val);
+    if (!isFinite(num)) return;
+    el.textContent = String(num);
+    _motion(m => m.animateCount(el, num, { fmt: String, duration: 320 }));
+  };
+  if (payload.slug === "aps" && payload.status === "done") {
+    set("online", s.online);
+    set("flagged", s.flagged);
+    set("offline", s.offline);
+  } else if (payload.slug === "alarms" && payload.status === "done") {
+    set("alarms", s.total);
+  }
+}
+
 function startWarmupStream() {
   const strip = document.querySelector("[data-warmup-strip]");
   if (!strip) return;
@@ -898,6 +923,7 @@ function startWarmupStream() {
   const text = document.querySelector("[data-warmup-text]");
 
   const updateTile = (payload) => {
+    updateStatusRibbon(payload);
     const tile = document.querySelector(`.tile[data-slug="${payload.slug}"]`);
     if (!tile) return;
     // sets data-tile-status attribute via camelCase dataset API
