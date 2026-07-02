@@ -43,6 +43,14 @@
         <span class="nav-icon">🔔</span>
         <span class="nav-label">Notifications</span>
       </a>
+      {# Profile management — operator+ only (viewer never sees the link). #}
+      {% if g.role in ('operator', 'admin') %}
+      <a href="/profiles" data-slug="profiles"
+         class="nav-item nav-pinned {% if active_slug == 'profiles' %}active{% endif %}">
+        <span class="nav-icon">🔗</span>
+        <span class="nav-label">Connection Profiles</span>
+      </a>
+      {% endif %}
     </nav>
   </aside>
   <main class="main">

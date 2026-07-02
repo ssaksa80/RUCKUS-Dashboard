@@ -347,6 +347,46 @@ def test_callback_known_subject_relogs_and_remaps_role(oidc_app, monkeypatch):
         assert rows[0].role == Role.operator.name
 
 
+# ── callback: role_changed audit (PB2 hardening) ──────────────────────────────
+
+def test_callback_role_change_audits_once_from_to(oidc_app, monkeypatch):
+    # A second OIDC login that remaps the user's role (viewer → operator) writes
+    # exactly one role_changed audit row carrying from/to and method=oidc.
+    first = {"sub": "idp-rc", "email": "rc@corp.local",
+             "name": "RC", "groups": ["random-unmapped"]}  # → viewer
+    _install_fake_idp(oidc_app, monkeypatch, claims=first)
+    with oidc_app.test_client() as c:
+        c.get("/auth/callback?state=state-abc&code=xyz")
+    with session_scope(oidc_app) as s:
+        uid = s.query(User).filter_by(oidc_subject="idp-rc").one().id
+        assert s.query(AuditLog).filter_by(action="role_changed").count() == 0
+
+    second = dict(first, groups=["noc"])  # → operator
+    _install_fake_idp(oidc_app, monkeypatch, claims=second)
+    with oidc_app.test_client() as c:
+        c.get("/auth/callback?state=state-abc&code=xyz")
+    with session_scope(oidc_app) as s:
+        rows = list(s.query(AuditLog).filter_by(action="role_changed"))
+        assert len(rows) == 1
+        assert rows[0].user_id == uid
+        assert rows[0].tenant_id is not None
+        assert (rows[0].detail or {}) == {
+            "method": "oidc", "from": Role.viewer.name, "to": Role.operator.name,
+        }
+
+
+def test_callback_same_role_relogin_writes_no_role_changed(oidc_app, monkeypatch):
+    # Logging in twice with the same mapped role writes no role_changed row.
+    _install_fake_idp(oidc_app, monkeypatch, claims=_CLAIMS_ADMIN)  # admins → admin
+    with oidc_app.test_client() as c:
+        c.get("/auth/callback?state=state-abc&code=xyz")
+    _install_fake_idp(oidc_app, monkeypatch, claims=_CLAIMS_ADMIN)
+    with oidc_app.test_client() as c:
+        c.get("/auth/callback?state=state-abc&code=xyz")
+    with session_scope(oidc_app) as s:
+        assert s.query(AuditLog).filter_by(action="role_changed").count() == 0
+
+
 # ── callback: error path (no leak) ────────────────────────────────────────────
 
 def test_callback_error_audits_failure_and_redirects(oidc_app, monkeypatch):

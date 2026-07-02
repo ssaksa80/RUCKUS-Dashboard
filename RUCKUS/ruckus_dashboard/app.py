@@ -187,6 +187,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     from .routes.auth import bp as auth_bp
     app.register_blueprint(auth_bp)
 
+    from .routes.profiles import bp as profiles_bp
+    app.register_blueprint(profiles_bp)
+
     from .routes.warmup import bp as warmup_bp
     app.register_blueprint(warmup_bp)
     from .routes.topology_layout import bp as topology_layout_bp

@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% set active_slug = "profiles" %}
+{% block title %}Connection Profiles{% endblock %}
+{% block breadcrumb %}Connection Profiles{% endblock %}
+{% block content %}
+{#
+  Human labels for the store-defined field names (PROFILE_PLAIN_FIELDS /
+  PROFILE_SECRET_FIELDS). Unknown names fall back to a humanized key so the
+  form still renders if the field set changes. NOTE: the RUCKUS One "tenant_id"
+  here is a controller credential — it is stored as a plain profile field and
+  is NOT the app-user tenant (which scopes every save/delete server-side).
+#}
+{% set field_labels = {
+  "platform": "Platform",
+  "smartzone_host": "SmartZone Controller",
+  "smartzone_username": "SmartZone Username",
+  "smartzone_api_version": "SmartZone API Version",
+  "smartzone_skip_tls_verify": "Skip SmartZone TLS verify (lab only)",
+  "tenant_id": "RUCKUS One Tenant ID",
+  "client_id": "RUCKUS One Client ID",
+  "ruckus_one_region": "RUCKUS One Region",
+  "ruckus_one_custom_host": "RUCKUS One Custom Host",
+  "smartzone_password": "SmartZone Password",
+  "client_secret": "RUCKUS One Client Secret",
+} %}
+
+<section class="profiles">
+  <h1>Connection Profiles</h1>
+  <p class="subtitle">Saved controller connections for this tenant. Secrets are
+    encrypted at rest and never shown.</p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="messages">
+      {% for category, message in messages %}
+      <div class="message {{ category }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  {% endwith %}
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Name</th><th>Platform</th><th>Host</th><th>User</th>
+        <th>Secret</th><th>Saved</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in profiles %}
+      <tr>
+        <td>{{ p.name }}</td>
+        <td>{{ p.platform or "—" }}</td>
+        <td>{{ p.smartzone_host or p.ruckus_one_custom_host or "—" }}</td>
+        <td>{{ p.smartzone_username or p.client_id or "—" }}</td>
+        <td>{% if p.has_secret %}<span class="badge">stored</span>{% else %}—{% endif %}</td>
+        <td>{{ p.saved_at or "—" }}</td>
+        <td>
+          <form method="post"
+                action="{{ url_for('profiles.delete_profile', name=p.name) }}"
+                class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="button secondary">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7">No saved profiles yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Save current / new profile</h2>
+  <form method="post" action="{{ url_for('profiles.save_profile') }}"
+        class="connect-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="form-grid">
+      <label class="field"><span>Profile name</span>
+        <input type="text" name="name" required></label>
+
+      {% for f in plain_fields %}
+      <label class="field"><span>{{ field_labels.get(f, f.replace("_", " ")|title) }}</span>
+        <input type="text" name="{{ f }}" autocomplete="off"></label>
+      {% endfor %}
+
+      {% for f in secret_fields %}
+      <label class="field"><span>{{ field_labels.get(f, f.replace("_", " ")|title) }}</span>
+        <input type="password" name="{{ f }}" value="{{ pw_sentinel }}"
+               autocomplete="new-password"></label>
+      {% endfor %}
+    </div>
+    <p class="security-note">Leave a secret field as its placeholder to keep the
+      previously stored value unchanged.</p>
+    <button type="submit" class="button primary">Save profile</button>
+  </form>
+</section>
+{% endblock %}
